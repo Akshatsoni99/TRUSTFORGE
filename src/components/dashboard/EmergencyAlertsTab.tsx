@@ -52,7 +52,7 @@ export const EmergencyAlertsTab: React.FC<EmergencyAlertsTabProps> = ({
           <span>Protocol Notice</span>
         </div>
         <p className="text-slate-300 leading-relaxed text-[11px]">
-          TRUSTFORGE alerts you and your designated emergency contacts immediately. In case of serious physical injury, collision, or criminal hazard, always confirm that local authorities (112) have been dispatched.
+          Incident alerts are recorded directly in this dashboard for owner review. External telephony (SMS/WhatsApp) is not configured; no external messages were dispatched. In case of emergency, always call 112 directly.
         </p>
       </div>
 
@@ -87,7 +87,7 @@ export const EmergencyAlertsTab: React.FC<EmergencyAlertsTabProps> = ({
                       Emergency Assistance Triggered
                     </h3>
                     <span className="text-[11px] text-slate-500">
-                      Dispatched to {alert.contacts_notified_count} trusted emergency contact(s)
+                      Recorded in dashboard (External contacts notified: {alert.contacts_notified_count})
                     </span>
                   </div>
                 </div>

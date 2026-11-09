@@ -1,3 +1,7 @@
+-- ============================================================================
+-- DEPRECATED DUPLICATE MIGRATION - DO NOT EXECUTE THIS FILE
+-- The ONLY authoritative migration is: supabase/migrations/001_initial_schema.sql
+-- ============================================================================
 -- TRUSTFORGE: Complete Schema Migration (Real MVP Edition)
 -- Database: Supabase PostgreSQL
 -- Features: Profiles, Vehicles, Trusted Contacts, Activity Events, Contact Requests, Parking Reports, Emergency Alerts

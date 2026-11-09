@@ -15,6 +15,7 @@ import {
   Info, 
   Check, 
   Eye, 
+  EyeOff,
   Lock,
   Phone,
   Image as ImageIcon
@@ -35,12 +36,14 @@ export const OnboardingPage: React.FC = () => {
 
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [submitting, setSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState<OnboardingData>({
     fullName: '',
     email: '',
     phone: '',
+    password: '',
     address: '',
     category: 'car',
     brand: '',
@@ -96,6 +99,9 @@ export const OnboardingPage: React.FC = () => {
     if (!formData.fullName.trim()) newErrors.fullName = 'Full name is required.';
     if (!formData.phone.trim() || !validateIndianMobile(formData.phone)) {
       newErrors.phone = 'A valid 10-digit Indian mobile number is required.';
+    }
+    if (!formData.password || formData.password.length < 6) {
+      newErrors.password = 'Create a secure password with at least 6 characters.';
     }
     if (formData.email?.trim() && !formData.email.includes('@')) {
       newErrors.email = 'Please enter a valid email address.';
@@ -320,6 +326,45 @@ export const OnboardingPage: React.FC = () => {
                     <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
                       <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       <span>SMS OTP verification is optional for this MVP and does not block registration.</span>
+                    </p>
+                  )}
+                </div>
+
+                {/* Account Password */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                      Account Password <span className="text-rose-500">*</span>
+                    </label>
+                    <span className="text-[11px] text-slate-400 font-medium">
+                      Min. 6 characters
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2.5 text-slate-400">
+                      <Lock className="w-4 h-4" />
+                    </span>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      placeholder="••••••••"
+                      value={formData.password || ''}
+                      onChange={e => setFormData({ ...formData, password: e.target.value })}
+                      className="w-full text-sm pl-10 pr-10 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {errors.password ? (
+                    <p className="text-xs text-rose-500 mt-1">{errors.password}</p>
+                  ) : (
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Used to securely access your owner dashboard on any device.
                     </p>
                   )}
                 </div>

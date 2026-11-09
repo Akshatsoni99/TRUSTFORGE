@@ -12,6 +12,17 @@ import {
   getOwnerTrustedContacts, 
   getOwnerStats
 } from '../lib/storage';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { 
+  signOutOwnerFromSupabase,
+  fetchOwnerProfileFromDb,
+  fetchOwnerVehiclesFromDb,
+  fetchOwnerTrustedContactsFromDb,
+  fetchOwnerContactRequestsFromDb,
+  fetchOwnerParkingReportsFromDb,
+  fetchOwnerEmergencyAlertsFromDb,
+  fetchOwnerActivityEventsFromDb
+} from '../lib/supabaseService';
 import { 
   Profile, 
   Vehicle, 
@@ -56,7 +67,7 @@ export const DashboardPage: React.FC = () => {
   });
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  const loadData = useCallback(() => {
+  const loadData = useCallback(async () => {
     const currentId = getCurrentOwnerId();
     if (!currentId) {
       setOwnerId(null);
@@ -64,6 +75,51 @@ export const DashboardPage: React.FC = () => {
     }
 
     setOwnerId(currentId);
+
+    // 1. Try fetching from Supabase if configured
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const [dbProfile, dbVehicles, dbContacts] = await Promise.all([
+          fetchOwnerProfileFromDb(currentId),
+          fetchOwnerVehiclesFromDb(currentId),
+          fetchOwnerTrustedContactsFromDb(currentId),
+        ]);
+
+        if (dbProfile || dbVehicles.length > 0) {
+          if (dbProfile) setProfile(dbProfile);
+          setVehicles(dbVehicles);
+          setTrustedContacts(dbContacts);
+
+          const vehicleIds = dbVehicles.map(v => v.id);
+          const [dbRequests, dbReports, dbAlerts, dbEvents] = await Promise.all([
+            fetchOwnerContactRequestsFromDb(vehicleIds),
+            fetchOwnerParkingReportsFromDb(vehicleIds),
+            fetchOwnerEmergencyAlertsFromDb(vehicleIds),
+            fetchOwnerActivityEventsFromDb(vehicleIds),
+          ]);
+
+          setContactRequests(dbRequests);
+          setParkingReports(dbReports);
+          setEmergencyAlerts(dbAlerts);
+          setActivityEvents(dbEvents);
+
+          const totalScans = dbVehicles.reduce((sum, v) => sum + (v.qr_scans_count || 0), 0);
+          setStats({
+            totalScans,
+            contactRequests: dbRequests.length,
+            parkingReports: dbReports.length,
+            emergencyAlerts: dbAlerts.length,
+            registeredVehiclesCount: dbVehicles.length,
+            activeQRCodesCount: dbVehicles.filter(v => v.qr_active).length,
+          });
+          return;
+        }
+      } catch (err) {
+        console.warn('Supabase dashboard load warning, falling back to local store:', err);
+      }
+    }
+
+    // 2. Local storage fallback
     setProfile(getCurrentProfile());
     const vehs = getOwnerVehicles(currentId);
     setVehicles(vehs);
@@ -86,13 +142,44 @@ export const DashboardPage: React.FC = () => {
     window.addEventListener('trustforge-db-change', handleDbChange);
     window.addEventListener('storage', handleDbChange);
 
+    // Supabase Realtime channel subscription
+    let channel: any = null;
+    if (isSupabaseConfigured && supabase) {
+      try {
+        channel = supabase
+          .channel('dashboard_realtime_events')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'contact_requests' }, () => {
+            loadData();
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'parking_reports' }, () => {
+            loadData();
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'emergency_alerts' }, () => {
+            loadData();
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'activity_events' }, () => {
+            loadData();
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicles' }, () => {
+            loadData();
+          })
+          .subscribe();
+      } catch (e) {
+        console.warn('Realtime subscription error:', e);
+      }
+    }
+
     return () => {
       window.removeEventListener('trustforge-db-change', handleDbChange);
       window.removeEventListener('storage', handleDbChange);
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
     };
   }, [loadData]);
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    await signOutOwnerFromSupabase();
     setCurrentOwnerId(null);
     setOwnerId(null);
     navigate('/');

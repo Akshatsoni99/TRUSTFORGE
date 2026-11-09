@@ -156,10 +156,11 @@ export interface PublicVehicleData {
 
 // Registration Onboarding Form State
 export interface OnboardingData {
-  // Step 1: Personal
+  // Step 1: Personal & Authentication
   fullName: string;
   phone: string;
   email?: string;
+  password?: string;
   address?: string;
 
   // Step 2: Vehicle

@@ -33,3 +33,5 @@ dist/
 .env
 !.env.example
 
+
+.vercel

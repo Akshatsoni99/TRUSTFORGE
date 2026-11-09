@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { Download, Printer, Copy, Check, ExternalLink, RefreshCw, Power, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { regenerateQRToken, toggleQRStatus } from '../../lib/storage';
+import { getPublicQrUrl } from '../../lib/utils';
 
 interface QRCodeDisplayProps {
   vehicleId: string;
@@ -32,8 +33,7 @@ export const QRCodeDisplay: React.FC<QRCodeDisplayProps> = ({
   const [showConfirmRegenerate, setShowConfirmRegenerate] = useState(false);
   const [isTogglingStatus, setIsTogglingStatus] = useState(false);
 
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://trustforge.vercel.app';
-  const publicUrl = `${baseUrl}/v/${token}`;
+  const publicUrl = getPublicQrUrl(token);
 
   useEffect(() => {
     if (canvasRef.current && token) {

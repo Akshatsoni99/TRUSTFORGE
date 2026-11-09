@@ -160,7 +160,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           </div>
           <div className="text-2xl font-black text-slate-900">{stats.emergencyAlerts}</div>
           <p className="text-[11px] text-slate-400">
-            {stats.emergencyAlerts === 0 ? 'No emergency requests yet.' : 'Dispatched to contacts'}
+            {stats.emergencyAlerts === 0 ? 'No emergency requests yet.' : 'Logged in owner dashboard'}
           </p>
         </div>
 

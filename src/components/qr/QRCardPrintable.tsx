@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import { Shield, PhoneCall, AlertCircle } from 'lucide-react';
-import { formatVehicleNumber } from '../../lib/utils';
+import { formatVehicleNumber, getPublicQrUrl } from '../../lib/utils';
 
 interface QRCardPrintableProps {
   token: string;
@@ -19,8 +19,7 @@ export const QRCardPrintable: React.FC<QRCardPrintableProps> = ({
   category,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://trustforge.vercel.app';
-  const publicUrl = `${baseUrl}/v/${token}`;
+  const publicUrl = getPublicQrUrl(token);
 
   useEffect(() => {
     if (canvasRef.current && token) {

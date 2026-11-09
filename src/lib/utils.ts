@@ -84,6 +84,20 @@ export function maskPhoneNumber(phone: string): string {
 }
 
 /**
+ * Generates an RFC 4122 version 4 compliant UUID
+ */
+export function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/**
  * Generates cryptographically secure random token for QR code
  */
 export function generateSecureToken(byteLength: number = 16): string {
@@ -163,5 +177,39 @@ export function checkRateLimit(actionKey: string, cooldownSeconds: number = 30):
   } catch {
     return { allowed: true, remainingSeconds: 0 };
   }
+}
+
+/**
+ * Resolves the absolute application base URL for generating production QR codes
+ */
+export function getAppBaseUrl(): string {
+  const envUrl = import.meta.env.VITE_APP_URL;
+  if (envUrl && typeof envUrl === 'string' && envUrl.startsWith('https://')) {
+    return envUrl.replace(/\/$/, '');
+  }
+
+  if (typeof window !== 'undefined' && window.location.origin) {
+    const origin = window.location.origin;
+    if (!origin.includes('localhost') && !origin.includes('127.0.0.1')) {
+      return origin.replace(/\/$/, '');
+    }
+  }
+
+  if (envUrl && typeof envUrl === 'string' && !envUrl.includes('localhost')) {
+    return envUrl.replace(/\/$/, '');
+  }
+
+  if (typeof window !== 'undefined' && window.location.origin) {
+    return window.location.origin.replace(/\/$/, '');
+  }
+
+  return 'https://trustforge.vercel.app';
+}
+
+/**
+ * Returns the absolute QR code URL for a public vehicle token
+ */
+export function getPublicQrUrl(token: string): string {
+  return `${getAppBaseUrl()}/v/${token}`;
 }
 

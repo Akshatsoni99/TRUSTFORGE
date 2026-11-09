@@ -66,14 +66,30 @@ export const PublicQRScanPage: React.FC = () => {
       return;
     }
 
-    const res = getPublicVehicleByToken(token);
-    if (res.success && res.vehicle) {
-      setVehicle(res.vehicle);
-    } else {
-      setErrorStatus(res.error || 'INVALID_TOKEN');
-      setErrorMessage(res.message || 'Vehicle QR code is not recognized.');
-    }
-    setLoading(false);
+    let isMounted = true;
+    const fetchVehicle = async () => {
+      try {
+        const res = await getPublicVehicleByToken(token);
+        if (!isMounted) return;
+        if (res.success && res.vehicle) {
+          setVehicle(res.vehicle);
+        } else {
+          setErrorStatus(res.error || 'INVALID_TOKEN');
+          setErrorMessage(res.message || 'Vehicle QR code is not recognized.');
+        }
+      } catch (err: any) {
+        if (!isMounted) return;
+        setErrorStatus('INVALID_TOKEN');
+        setErrorMessage(err.message || 'Failed to retrieve vehicle details.');
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    fetchVehicle();
+    return () => {
+      isMounted = false;
+    };
   }, [token]);
 
   // Request browser location with explicit consent
@@ -101,7 +117,7 @@ export const PublicQRScanPage: React.FC = () => {
   };
 
   // Submit Contact Request
-  const handleSubmitContact = () => {
+  const handleSubmitContact = async () => {
     if (!vehicle || !token || submittingAction) return;
     const rateCheck = checkRateLimit(`contact_${vehicle.id}`, 20);
     if (!rateCheck.allowed) {
@@ -110,23 +126,29 @@ export const PublicQRScanPage: React.FC = () => {
     }
 
     setSubmittingAction(true);
-    const result = submitContactRequest({
-      vehicleId: vehicle.id,
-      category: contactCategory,
-      message: contactMessage,
-      callerContact: callerPhone,
-      location: scannerLocation,
-    });
+    try {
+      const result = await submitContactRequest({
+        vehicleId: vehicle.id,
+        category: contactCategory,
+        message: contactMessage,
+        callerContact: callerPhone,
+        location: scannerLocation,
+        token: token,
+      });
 
-    setSubmittingAction(false);
-    setActiveModal(null);
-    setContactMessage('');
-    setCallerPhone('');
-    setActionSuccess(result.message || 'Your message has been dispatched to the vehicle owner.');
+      setActiveModal(null);
+      setContactMessage('');
+      setCallerPhone('');
+      setActionSuccess(result.message || 'Your message has been dispatched to the vehicle owner.');
+    } catch (err: any) {
+      alert(err?.message || 'Failed to send contact request. Please try again.');
+    } finally {
+      setSubmittingAction(false);
+    }
   };
 
   // Submit Parking Report
-  const handleSubmitParking = () => {
+  const handleSubmitParking = async () => {
     if (!vehicle || !token || submittingAction) return;
     const rateCheck = checkRateLimit(`parking_${vehicle.id}`, 20);
     if (!rateCheck.allowed) {
@@ -135,23 +157,29 @@ export const PublicQRScanPage: React.FC = () => {
     }
 
     setSubmittingAction(true);
-    submitParkingReport({
-      vehicleId: vehicle.id,
-      reason: parkingReason,
-      description: parkingDescription,
-      location: scannerLocation,
-      scannerContact: scannerPhoneOpt,
-    });
+    try {
+      await submitParkingReport({
+        vehicleId: vehicle.id,
+        reason: parkingReason,
+        description: parkingDescription,
+        location: scannerLocation,
+        scannerContact: scannerPhoneOpt,
+        token: token,
+      });
 
-    setSubmittingAction(false);
-    setActiveModal(null);
-    setParkingDescription('');
-    setScannerPhoneOpt('');
-    setActionSuccess('Parking report submitted. The vehicle owner has been notified in their dashboard.');
+      setActiveModal(null);
+      setParkingDescription('');
+      setScannerPhoneOpt('');
+      setActionSuccess('Parking report submitted. The vehicle owner has been notified in their dashboard.');
+    } catch (err: any) {
+      alert(err?.message || 'Failed to submit parking report. Please try again.');
+    } finally {
+      setSubmittingAction(false);
+    }
   };
 
   // Submit Emergency Alert
-  const handleSubmitEmergency = () => {
+  const handleSubmitEmergency = async () => {
     if (!vehicle || !token || submittingAction) return;
     const rateCheck = checkRateLimit(`emergency_${vehicle.id}`, 15);
     if (!rateCheck.allowed) {
@@ -160,22 +188,29 @@ export const PublicQRScanPage: React.FC = () => {
     }
 
     setSubmittingAction(true);
-    const result = submitEmergencyAlert({
-      vehicleId: vehicle.id,
-      message: emergencyMessage || 'Emergency assistance requested near your vehicle.',
-      location: scannerLocation,
-    });
+    try {
+      const result = await submitEmergencyAlert({
+        vehicleId: vehicle.id,
+        message: emergencyMessage || 'Emergency assistance requested near your vehicle.',
+        location: scannerLocation,
+        token: token,
+      });
 
-    setSubmittingAction(false);
-    setActiveModal(null);
-    setEmergencyMessage('');
-    setActionSuccess(
-      `Emergency request submitted. Alert logged for vehicle owner and ${result.contactsNotified} registered contact(s). For immediate life safety, always dial 112 directly.`
-    );
+      setActiveModal(null);
+      setEmergencyMessage('');
+      setActionSuccess(
+        result.message ||
+        'Emergency alert recorded in vehicle owner dashboard. Trusted contacts were NOT notified (external SMS/WhatsApp gateway is not configured). For immediate life safety, call 112 directly.'
+      );
+    } catch (err: any) {
+      alert(err?.message || 'Failed to record emergency alert. Please try again.');
+    } finally {
+      setSubmittingAction(false);
+    }
   };
 
   // Trigger Mediated Trusted Contacts Request
-  const handleNotifyTrustedContacts = () => {
+  const handleNotifyTrustedContacts = async () => {
     if (!vehicle || submittingAction) return;
     const rateCheck = checkRateLimit(`contacts_${vehicle.id}`, 25);
     if (!rateCheck.allowed) {
@@ -183,15 +218,24 @@ export const PublicQRScanPage: React.FC = () => {
       return;
     }
 
-    submitEmergencyAlert({
-      vehicleId: vehicle.id,
-      message: 'Citizen requested trusted contacts be notified regarding vehicle status.',
-      location: scannerLocation,
-    });
+    setSubmittingAction(true);
+    try {
+      const result = await submitEmergencyAlert({
+        vehicleId: vehicle.id,
+        message: 'Citizen requested trusted contacts be notified regarding vehicle status.',
+        location: scannerLocation,
+        token: token,
+      });
 
-    setActionSuccess(
-      `Request recorded. An alert was logged for the owner's emergency contact network. (External SMS dispatch is currently in setup mode). Private numbers remain hidden.`
-    );
+      setActionSuccess(
+        result.message ||
+        'Emergency notification recorded in vehicle dashboard. Trusted contacts were NOT notified because external SMS dispatch is not configured. For immediate emergencies, use the direct 112 call button below.'
+      );
+    } catch (err: any) {
+      alert(err?.message || 'Failed to record notification. Please try again.');
+    } finally {
+      setSubmittingAction(false);
+    }
   };
 
   if (loading) {
@@ -448,15 +492,15 @@ export const PublicQRScanPage: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-sm font-bold text-slate-900 block">
-                    Notify Trusted Contacts
+                    Record Incident for Contacts
                   </span>
                   <span className="text-[11px] text-slate-500">
-                    Alert {vehicle.trusted_contacts_count} emergency contacts (private numbers hidden)
+                    Log emergency status for {vehicle.trusted_contacts_count} configured contact(s) in dashboard
                   </span>
                 </div>
               </div>
               <span className="text-xs font-semibold text-purple-600 group-hover:translate-x-0.5 transition-transform">
-                Notify →
+                Log Alert →
               </span>
             </button>
           )}
@@ -747,7 +791,7 @@ export const PublicQRScanPage: React.FC = () => {
             </div>
 
             <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-[11px] text-rose-800 leading-relaxed">
-              <strong>Notice:</strong> This submits an urgent alert to the vehicle owner and their designated emergency contacts. It does <strong>not</strong> automatically dispatch police or ambulance.
+              <strong>Notice:</strong> This logs an urgent incident in the vehicle owner's emergency dashboard. It does <strong>not</strong> automatically dispatch police, fire, or ambulance. For life-threatening emergencies, use the direct 112 call button.
             </div>
 
             <div className="space-y-3">

@@ -15,7 +15,25 @@ import {
   ReportStatus,
   EmergencyStatus
 } from '../types';
-import { generateSecureToken, maskVehicleNumber } from './utils';
+import { generateSecureToken, generateUUID, maskVehicleNumber } from './utils';
+import {
+  signUpOwnerWithSupabase,
+  fetchPublicVehicleRpc,
+  submitPublicContactRequestRpc,
+  submitPublicParkingReportRpc,
+  submitPublicEmergencyAlertRpc,
+  updateVehicleSettingsInDb,
+  updateContactRequestStatusInDb,
+  updateParkingReportStatusInDb,
+  updateEmergencyAlertStatusInDb,
+  fetchOwnerProfileFromDb,
+  fetchOwnerVehiclesFromDb,
+  fetchOwnerTrustedContactsFromDb,
+  fetchOwnerContactRequestsFromDb,
+  fetchOwnerParkingReportsFromDb,
+  fetchOwnerEmergencyAlertsFromDb,
+  fetchOwnerActivityEventsFromDb
+} from './supabaseService';
 
 const STORAGE_KEYS = {
   CURRENT_OWNER: 'tf_current_owner_id',
@@ -54,7 +72,7 @@ const STORAGE_KEYS = {
 })();
 
 // Event dispatcher for reactive dashboard updates when public actions occur in another tab/window
-const emitStorageEvent = (eventType: string, data?: any) => {
+export const emitStorageEvent = (eventType: string, data?: any) => {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('trustforge-db-change', { detail: { eventType, data } }));
   }
@@ -81,7 +99,7 @@ export function getBackendStatus(): {
 // LOCAL STORAGE ADAPTER
 // ============================================================================
 
-function getLocalTable<T>(key: string): T[] {
+export function getLocalTable<T>(key: string): T[] {
   try {
     const raw = localStorage.getItem(key);
     return raw ? JSON.parse(raw) : [];
@@ -90,7 +108,7 @@ function getLocalTable<T>(key: string): T[] {
   }
 }
 
-function setLocalTable<T>(key: string, data: T[]): void {
+export function setLocalTable<T>(key: string, data: T[]): void {
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch (err) {
@@ -128,9 +146,28 @@ export async function registerOwnerAndVehicle(data: OnboardingData): Promise<{
   trustedContacts: TrustedContact[];
 }> {
   const now = new Date().toISOString();
-  const ownerId = `usr_${generateSecureToken(8)}`;
-  const vehicleId = `veh_${generateSecureToken(8)}`;
+  let ownerId = generateUUID();
+  const vehicleId = generateUUID();
   const qrToken = generateSecureToken(16);
+
+  // If Supabase is configured, sign up via Supabase Auth
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const authRes = await signUpOwnerWithSupabase({
+        fullName: data.fullName,
+        phone: data.phone,
+        email: data.email,
+        password: data.password,
+        address: data.address,
+      });
+
+      if (authRes.user?.id) {
+        ownerId = authRes.user.id;
+      }
+    } catch (authErr) {
+      console.warn('Supabase Auth error during onboarding; using local UUID:', authErr);
+    }
+  }
 
   // 1. Profile Record
   const newProfile: Profile = {
@@ -138,7 +175,7 @@ export async function registerOwnerAndVehicle(data: OnboardingData): Promise<{
     full_name: data.fullName.trim(),
     email: data.email?.trim() ? data.email.trim().toLowerCase() : undefined,
     phone: data.phone.trim(),
-    phone_verified: false, // OTP is optional in MVP; stored as unverified
+    phone_verified: false,
     residential_address: data.address?.trim() || undefined,
     created_at: now,
     updated_at: now,
@@ -170,7 +207,7 @@ export async function registerOwnerAndVehicle(data: OnboardingData): Promise<{
 
   // 3. Trusted Contacts
   const newContacts: TrustedContact[] = data.contacts.map((c, index) => ({
-    id: `cnt_${generateSecureToken(8)}`,
+    id: generateUUID(),
     owner_id: ownerId,
     vehicle_id: vehicleId,
     full_name: c.fullName.trim(),
@@ -183,18 +220,21 @@ export async function registerOwnerAndVehicle(data: OnboardingData): Promise<{
     created_at: now,
   }));
 
-  // If Supabase is configured, write to cloud
+  // If Supabase is configured and connected, persist to Supabase Database
   if (isSupabaseConfigured && supabase) {
     try {
-      await supabase.from('profiles').insert({
+      // 1. Upsert profile
+      await supabase.from('profiles').upsert({
         id: ownerId,
         full_name: newProfile.full_name,
         email: newProfile.email || null,
         phone: newProfile.phone,
         phone_verified: false,
         residential_address: newProfile.residential_address || null,
+        updated_at: now,
       });
 
+      // 2. Insert vehicle
       await supabase.from('vehicles').insert({
         id: newVehicle.id,
         owner_id: ownerId,
@@ -212,6 +252,7 @@ export async function registerOwnerAndVehicle(data: OnboardingData): Promise<{
         show_owner_name: newVehicle.show_owner_name,
       });
 
+      // 3. Insert trusted contacts
       if (newContacts.length > 0) {
         await supabase.from('trusted_contacts').insert(
           newContacts.map(c => ({
@@ -229,7 +270,7 @@ export async function registerOwnerAndVehicle(data: OnboardingData): Promise<{
         );
       }
     } catch (err) {
-      console.warn('Supabase insert issue; local persistent fallback active:', err);
+      console.warn('Supabase insertion issue; local persistent fallback active:', err);
     }
   }
 
@@ -246,7 +287,7 @@ export async function registerOwnerAndVehicle(data: OnboardingData): Promise<{
   contacts.push(...newContacts);
   setLocalTable(STORAGE_KEYS.TRUSTED_CONTACTS, contacts);
 
-  // Set session owner
+  // Set active session owner
   setCurrentOwnerId(ownerId);
   emitStorageEvent('registered', { ownerId, vehicleId });
 
@@ -283,6 +324,12 @@ export function updateVehicle(vehicleId: string, updates: Partial<Vehicle>): Veh
   };
 
   setLocalTable(STORAGE_KEYS.VEHICLES, vehicles);
+
+  // Asynchronously sync to Supabase if configured
+  if (isSupabaseConfigured && supabase) {
+    updateVehicleSettingsInDb(vehicleId, updates).catch(e => console.warn('Vehicle DB sync error:', e));
+  }
+
   emitStorageEvent('vehicle_updated', { vehicleId });
   return vehicles[index];
 }
@@ -296,6 +343,10 @@ export function regenerateQRToken(vehicleId: string): { success: boolean; newTok
   vehicles[index].qr_token = newToken;
   vehicles[index].updated_at = new Date().toISOString();
   setLocalTable(STORAGE_KEYS.VEHICLES, vehicles);
+
+  if (isSupabaseConfigured && supabase) {
+    updateVehicleSettingsInDb(vehicleId, { qr_token: newToken }).catch(e => console.warn('QR token sync error:', e));
+  }
 
   logActivityEvent(vehicleId, 'qr_token_regenerated', {
     note: 'Previous QR token was invalidated and replaced with a new secure token.',
@@ -315,6 +366,10 @@ export function toggleQRStatus(vehicleId: string, active: boolean): { success: b
   vehicles[index].updated_at = new Date().toISOString();
   setLocalTable(STORAGE_KEYS.VEHICLES, vehicles);
 
+  if (isSupabaseConfigured && supabase) {
+    updateVehicleSettingsInDb(vehicleId, { qr_active: active }).catch(e => console.warn('QR status sync error:', e));
+  }
+
   logActivityEvent(vehicleId, 'qr_status_changed', {
     status: active ? 'activated' : 'deactivated',
     timestamp: new Date().toISOString(),
@@ -328,12 +383,38 @@ export function toggleQRStatus(vehicleId: string, active: boolean): { success: b
 // PUBLIC QR LOOKUP & SAFE DATA RETRIEVAL (NO PRIVATE DATA EXPOSURE)
 // ============================================================================
 
-export function getPublicVehicleByToken(token: string): {
+export async function getPublicVehicleByToken(token: string): Promise<{
   success: boolean;
   vehicle?: PublicVehicleData;
   error?: 'INVALID_TOKEN' | 'INACTIVE_QR' | 'NOT_FOUND';
   message?: string;
-} {
+}> {
+  // If Supabase is configured, use secure public RPC
+  if (isSupabaseConfigured && supabase) {
+    const rpcRes = await fetchPublicVehicleRpc(token);
+    if (rpcRes.success && rpcRes.vehicle) {
+      return {
+        success: true,
+        vehicle: rpcRes.vehicle,
+      };
+    }
+    if (rpcRes.error === 'INACTIVE_QR') {
+      return {
+        success: false,
+        error: 'INACTIVE_QR',
+        message: rpcRes.message || 'This vehicle QR code has been temporarily deactivated by the owner.',
+      };
+    }
+    if (rpcRes.error === 'INVALID_TOKEN' || rpcRes.error === 'INVALID_OR_INACTIVE_TOKEN') {
+      return {
+        success: false,
+        error: 'INVALID_TOKEN',
+        message: rpcRes.message || 'This vehicle QR code is not recognized.',
+      };
+    }
+  }
+
+  // Local storage fallback
   const vehicles = getLocalTable<Vehicle>(STORAGE_KEYS.VEHICLES);
   const vehicle = vehicles.find(v => v.qr_token === token);
 
@@ -393,7 +474,6 @@ export function getPublicVehicleByToken(token: string): {
     allow_parking_reports: vehicle.allow_parking_reports ?? true,
     allow_emergency_alerts: vehicle.allow_emergency_alerts ?? true,
     allow_public_phone_display: Boolean(vehicle.allow_public_phone_display),
-    // Only reveal phone if owner explicitly opted in via privacy settings
     owner_public_phone: vehicle.allow_public_phone_display && owner?.phone ? owner.phone : undefined,
   };
 
@@ -407,20 +487,45 @@ export function getPublicVehicleByToken(token: string): {
 // PUBLIC ACTIONS & NOTIFICATIONS (REAL EVENT RECORDING)
 // ============================================================================
 
-export function submitContactRequest(params: {
+export async function submitContactRequest(params: {
   vehicleId: string;
   category: ContactRequestCategory;
   message?: string;
   callerContact?: string;
   location?: { latitude: number; longitude: number };
-}): { success: boolean; message: string; requestId: string } {
+  token?: string;
+}): Promise<{ success: boolean; message: string; requestId: string }> {
+  const token = params.token || getVehicleById(params.vehicleId)?.qr_token;
+
+  if (isSupabaseConfigured && supabase && token) {
+    const rpcRes = await submitPublicContactRequestRpc({
+      token,
+      category: params.category,
+      message: params.message,
+      callerContact: params.callerContact,
+      location: params.location,
+    });
+
+    if (rpcRes.success) {
+      emitStorageEvent('contact_requested', { vehicleId: params.vehicleId, requestId: rpcRes.requestId });
+      return {
+        success: true,
+        message: rpcRes.message || 'Your message has been dispatched to the vehicle owner.',
+        requestId: rpcRes.requestId || '',
+      };
+    } else {
+      throw new Error(rpcRes.message || rpcRes.error || 'Failed to submit contact request.');
+    }
+  }
+
+  // Local storage fallback
   const vehicle = getVehicleById(params.vehicleId);
   if (!vehicle || !vehicle.qr_active) {
     return { success: false, message: 'Vehicle is currently inactive.', requestId: '' };
   }
 
   const now = new Date().toISOString();
-  const requestId = `cr_${generateSecureToken(8)}`;
+  const requestId = generateUUID();
 
   const newRequest: ContactRequest = {
     id: requestId,
@@ -452,15 +557,36 @@ export function submitContactRequest(params: {
   };
 }
 
-export function submitParkingReport(params: {
+export async function submitParkingReport(params: {
   vehicleId: string;
   reason: ParkingReason;
   description?: string;
   location?: { latitude: number; longitude: number };
   scannerContact?: string;
-}): { success: boolean; reportId: string } {
+  token?: string;
+}): Promise<{ success: boolean; reportId: string }> {
+  const token = params.token || getVehicleById(params.vehicleId)?.qr_token;
+
+  if (isSupabaseConfigured && supabase && token) {
+    const rpcRes = await submitPublicParkingReportRpc({
+      token,
+      reason: params.reason,
+      description: params.description,
+      location: params.location,
+      scannerContact: params.scannerContact,
+    });
+
+    if (rpcRes.success) {
+      emitStorageEvent('parking_reported', { vehicleId: params.vehicleId, reportId: rpcRes.reportId });
+      return { success: true, reportId: rpcRes.reportId || '' };
+    } else {
+      throw new Error(rpcRes.message || rpcRes.error || 'Failed to submit parking report.');
+    }
+  }
+
+  // Local storage fallback
   const now = new Date().toISOString();
-  const reportId = `prk_${generateSecureToken(8)}`;
+  const reportId = generateUUID();
 
   const newReport: ParkingReport = {
     id: reportId,
@@ -486,13 +612,44 @@ export function submitParkingReport(params: {
   return { success: true, reportId };
 }
 
-export function submitEmergencyAlert(params: {
+export async function submitEmergencyAlert(params: {
   vehicleId: string;
   message?: string;
   location?: { latitude: number; longitude: number };
-}): { success: boolean; alertId: string; contactsNotified: number } {
+  token?: string;
+}): Promise<{ 
+  success: boolean; 
+  alertId: string; 
+  contactsNotified: number;
+  configuredContacts: number;
+  message: string;
+}> {
+  const token = params.token || getVehicleById(params.vehicleId)?.qr_token;
+
+  if (isSupabaseConfigured && supabase && token) {
+    const rpcRes = await submitPublicEmergencyAlertRpc({
+      token,
+      message: params.message,
+      location: params.location,
+    });
+
+    if (rpcRes.success) {
+      emitStorageEvent('emergency_alerted', { vehicleId: params.vehicleId, alertId: rpcRes.alertId });
+      return {
+        success: true,
+        alertId: rpcRes.alertId || '',
+        contactsNotified: 0,
+        configuredContacts: rpcRes.configuredContactsCount || 0,
+        message: rpcRes.message || 'Emergency alert recorded in vehicle owner dashboard. Trusted contacts were NOT notified.',
+      };
+    } else {
+      throw new Error(rpcRes.message || rpcRes.error || 'Failed to dispatch emergency alert.');
+    }
+  }
+
+  // Local storage fallback
   const now = new Date().toISOString();
-  const alertId = `emg_${generateSecureToken(8)}`;
+  const alertId = generateUUID();
 
   const contacts = getLocalTable<TrustedContact>(STORAGE_KEYS.TRUSTED_CONTACTS);
   const vehicle = getVehicleById(params.vehicleId);
@@ -506,7 +663,7 @@ export function submitEmergencyAlert(params: {
     severity: 'urgent',
     message: params.message?.trim() || 'Urgent assistance requested via vehicle QR code.',
     scanner_location: params.location,
-    contacts_notified_count: eligibleContacts.length,
+    contacts_notified_count: 0,
     status: 'active',
     created_at: now,
   };
@@ -517,7 +674,8 @@ export function submitEmergencyAlert(params: {
 
   logActivityEvent(params.vehicleId, 'emergency_alert', {
     alert_id: alertId,
-    contacts_notified_count: eligibleContacts.length,
+    configured_contacts_count: eligibleContacts.length,
+    contacts_notified_count: 0,
     message: newAlert.message,
   }, params.location);
 
@@ -525,7 +683,9 @@ export function submitEmergencyAlert(params: {
   return {
     success: true,
     alertId,
-    contactsNotified: eligibleContacts.length,
+    contactsNotified: 0,
+    configuredContacts: eligibleContacts.length,
+    message: 'Emergency alert recorded in vehicle owner dashboard. Trusted contacts were NOT notified (SMS/WhatsApp gateway not configured).',
   };
 }
 
@@ -578,13 +738,18 @@ export function getOwnerContactRequests(ownerId: string): ContactRequest[] {
 export function updateContactRequestStatus(requestId: string, status: 'pending' | 'acknowledged' | 'resolved'): boolean {
   const requests = getLocalTable<ContactRequest>(STORAGE_KEYS.CONTACT_REQUESTS);
   const index = requests.findIndex(r => r.id === requestId);
-  if (index === -1) return false;
-
-  requests[index].status = status;
-  if (status === 'resolved') {
-    requests[index].resolved_at = new Date().toISOString();
+  if (index >= 0) {
+    requests[index].status = status;
+    if (status === 'resolved') {
+      requests[index].resolved_at = new Date().toISOString();
+    }
+    setLocalTable(STORAGE_KEYS.CONTACT_REQUESTS, requests);
   }
-  setLocalTable(STORAGE_KEYS.CONTACT_REQUESTS, requests);
+
+  if (isSupabaseConfigured && supabase) {
+    updateContactRequestStatusInDb(requestId, status).catch(e => console.warn('Sync contact request error:', e));
+  }
+
   emitStorageEvent('contact_request_updated', { requestId, status });
   return true;
 }
@@ -599,13 +764,18 @@ export function getOwnerParkingReports(ownerId: string): ParkingReport[] {
 export function updateParkingReportStatus(reportId: string, status: ReportStatus): boolean {
   const reports = getLocalTable<ParkingReport>(STORAGE_KEYS.PARKING_REPORTS);
   const index = reports.findIndex(r => r.id === reportId);
-  if (index === -1) return false;
-
-  reports[index].status = status;
-  if (status === 'resolved') {
-    reports[index].resolved_at = new Date().toISOString();
+  if (index >= 0) {
+    reports[index].status = status;
+    if (status === 'resolved') {
+      reports[index].resolved_at = new Date().toISOString();
+    }
+    setLocalTable(STORAGE_KEYS.PARKING_REPORTS, reports);
   }
-  setLocalTable(STORAGE_KEYS.PARKING_REPORTS, reports);
+
+  if (isSupabaseConfigured && supabase) {
+    updateParkingReportStatusInDb(reportId, status).catch(e => console.warn('Sync parking report error:', e));
+  }
+
   emitStorageEvent('report_updated', { reportId, status });
   return true;
 }
@@ -620,13 +790,18 @@ export function getOwnerEmergencyAlerts(ownerId: string): EmergencyAlert[] {
 export function updateEmergencyAlertStatus(alertId: string, status: EmergencyStatus): boolean {
   const alerts = getLocalTable<EmergencyAlert>(STORAGE_KEYS.EMERGENCY_ALERTS);
   const index = alerts.findIndex(a => a.id === alertId);
-  if (index === -1) return false;
-
-  alerts[index].status = status;
-  if (status === 'resolved') {
-    alerts[index].resolved_at = new Date().toISOString();
+  if (index >= 0) {
+    alerts[index].status = status;
+    if (status === 'resolved') {
+      alerts[index].resolved_at = new Date().toISOString();
+    }
+    setLocalTable(STORAGE_KEYS.EMERGENCY_ALERTS, alerts);
   }
-  setLocalTable(STORAGE_KEYS.EMERGENCY_ALERTS, alerts);
+
+  if (isSupabaseConfigured && supabase) {
+    updateEmergencyAlertStatusInDb(alertId, status).catch(e => console.warn('Sync emergency alert error:', e));
+  }
+
   emitStorageEvent('alert_updated', { alertId, status });
   return true;
 }
@@ -652,6 +827,29 @@ export function saveTrustedContact(contact: TrustedContact): void {
     contacts.push(contact);
   }
   setLocalTable(STORAGE_KEYS.TRUSTED_CONTACTS, contacts);
+
+  if (isSupabaseConfigured && supabase) {
+    (async () => {
+      try {
+        await supabase.from('trusted_contacts').upsert({
+          id: contact.id,
+          owner_id: contact.owner_id,
+          vehicle_id: contact.vehicle_id || null,
+          full_name: contact.full_name,
+          relationship: contact.relationship,
+          phone: contact.phone,
+          email: contact.email || null,
+          phone_verified: contact.phone_verified,
+          is_primary: contact.is_primary,
+          notify_on_emergency: contact.notify_on_emergency,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn('Save contact DB error:', e);
+      }
+    })();
+  }
+
   emitStorageEvent('contacts_updated', { contactId: contact.id });
 }
 
@@ -659,6 +857,17 @@ export function deleteTrustedContact(contactId: string): void {
   const contacts = getLocalTable<TrustedContact>(STORAGE_KEYS.TRUSTED_CONTACTS);
   const filtered = contacts.filter(c => c.id !== contactId);
   setLocalTable(STORAGE_KEYS.TRUSTED_CONTACTS, filtered);
+
+  if (isSupabaseConfigured && supabase) {
+    (async () => {
+      try {
+        await supabase.from('trusted_contacts').delete().eq('id', contactId);
+      } catch (e) {
+        console.warn('Delete contact DB error:', e);
+      }
+    })();
+  }
+
   emitStorageEvent('contacts_updated', { contactId });
 }
 
@@ -673,6 +882,20 @@ export function updateProfile(ownerId: string, updates: Partial<Profile>): Profi
     updated_at: new Date().toISOString(),
   };
   setLocalTable(STORAGE_KEYS.PROFILES, profiles);
+
+  if (isSupabaseConfigured && supabase) {
+    (async () => {
+      try {
+        await supabase.from('profiles').update({
+          ...updates,
+          updated_at: new Date().toISOString(),
+        }).eq('id', ownerId);
+      } catch (e) {
+        console.warn('Profile DB error:', e);
+      }
+    })();
+  }
+
   emitStorageEvent('profile_updated', { ownerId });
   return profiles[index];
 }
@@ -693,7 +916,7 @@ function logActivityEvent(
 ) {
   const events = getLocalTable<ActivityEvent>(STORAGE_KEYS.ACTIVITY_EVENTS);
   const newEvent: ActivityEvent = {
-    id: `act_${generateSecureToken(8)}`,
+    id: generateUUID(),
     vehicle_id: vehicleId,
     event_type: eventType,
     details,
