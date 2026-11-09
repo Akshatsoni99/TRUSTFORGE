@@ -349,7 +349,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                         {meta.label}
                       </span>
                       <span className="text-[11px] text-slate-500">
-                        {event.details?.reason ? `Reason: ${event.details.reason}` : event.details?.message || 'Logged via TRUSTFORGE gateway'}
+                        {event.details?.reason ? `Reason: ${event.details.reason}` : event.details?.message || 'Logged via TrustFordge gateway'}
                       </span>
                     </div>
                   </div>

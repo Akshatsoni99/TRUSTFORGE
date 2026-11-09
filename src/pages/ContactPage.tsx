@@ -33,7 +33,7 @@ export const ContactPage: React.FC = () => {
           Support & Assistance
         </span>
         <h1 className="text-3xl sm:text-5xl font-black text-slate-900 tracking-tight">
-          Contact TRUSTFORGE
+          Contact TrustFordge
         </h1>
         <p className="text-base text-slate-600 leading-relaxed max-w-xl">
           Have questions about QR passes, fleet integration, or need help managing your account? Reach out to our technical team.
@@ -48,7 +48,7 @@ export const ContactPage: React.FC = () => {
               <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto" />
               <h3 className="text-base font-bold text-slate-900">Message Dispatched</h3>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Thank you for reaching out. A TRUSTFORGE support engineer will follow up at <strong>{email}</strong> within 1 business day.
+                Thank you for reaching out. A TrustFordge support engineer will follow up at <strong>{email}</strong> within 1 business day.
               </p>
               <button
                 onClick={() => {
@@ -140,11 +140,11 @@ export const ContactPage: React.FC = () => {
             <div className="space-y-4 text-xs text-slate-300">
               <div className="flex items-start gap-3">
                 <MapPin className="w-4 h-4 text-brand-400 shrink-0 mt-0.5" />
-                <span>TRUSTFORGE Mobility Technologies, Tech Park Hub, Bengaluru, Karnataka, India</span>
+                <span>TrustFordge Mobility Technologies, Tech Park Hub, Bengaluru, Karnataka, India</span>
               </div>
               <div className="flex items-center gap-3">
                 <Mail className="w-4 h-4 text-brand-400 shrink-0" />
-                <span>support@trustforge.network</span>
+                <span>support@trustfordge.network</span>
               </div>
             </div>
 

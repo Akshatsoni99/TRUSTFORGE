@@ -18,6 +18,7 @@ import {
 import { generateSecureToken, generateUUID, maskVehicleNumber } from './utils';
 import {
   signUpOwnerWithSupabase,
+  registerOwnerAndVehicleRpc,
   fetchPublicVehicleRpc,
   submitPublicContactRequestRpc,
   submitPublicParkingReportRpc,
@@ -200,6 +201,7 @@ export async function registerOwnerAndVehicle(data: OnboardingData): Promise<{
     allow_emergency_alerts: true,
     mask_registration_number: Boolean(data.maskRegistrationNumber),
     allow_public_phone_display: Boolean(data.allowPublicPhoneDisplay),
+    allow_public_address_display: Boolean(data.allowPublicAddressDisplay),
     show_owner_name: Boolean(data.showOwnerName ?? true),
     created_at: now,
     updated_at: now,
@@ -223,51 +225,92 @@ export async function registerOwnerAndVehicle(data: OnboardingData): Promise<{
   // If Supabase is configured and connected, persist to Supabase Database
   if (isSupabaseConfigured && supabase) {
     try {
-      // 1. Upsert profile
-      await supabase.from('profiles').upsert({
-        id: ownerId,
-        full_name: newProfile.full_name,
-        email: newProfile.email || null,
-        phone: newProfile.phone,
-        phone_verified: false,
-        residential_address: newProfile.residential_address || null,
-        updated_at: now,
+      // 1. Try atomic, security-definer RPC registration
+      const rpcRes = await registerOwnerAndVehicleRpc({
+        profile: {
+          id: ownerId,
+          full_name: newProfile.full_name,
+          email: newProfile.email,
+          phone: newProfile.phone,
+          residential_address: newProfile.residential_address,
+        },
+        vehicle: {
+          id: newVehicle.id,
+          owner_id: ownerId,
+          category: newVehicle.category,
+          brand: newVehicle.brand,
+          model: newVehicle.model,
+          model_year: newVehicle.model_year,
+          registration_number: newVehicle.registration_number,
+          color: newVehicle.color,
+          photo_url: newVehicle.photo_url,
+          qr_token: newVehicle.qr_token,
+          qr_active: newVehicle.qr_active,
+          mask_registration_number: newVehicle.mask_registration_number,
+          allow_public_phone_display: newVehicle.allow_public_phone_display,
+          show_owner_name: newVehicle.show_owner_name,
+          allow_public_address_display: newVehicle.allow_public_address_display,
+          allow_trusted_contacts_display: newVehicle.allow_trusted_contacts_display,
+          allow_trusted_contacts_phone_display: newVehicle.allow_trusted_contacts_phone_display,
+        },
+        contacts: newContacts.map(c => ({
+          id: c.id,
+          owner_id: ownerId,
+          vehicle_id: vehicleId,
+          full_name: c.full_name,
+          relationship: c.relationship,
+          phone: c.phone,
+          email: c.email,
+          is_primary: c.is_primary,
+          notify_on_emergency: c.notify_on_emergency,
+        })),
       });
 
-      // 2. Insert vehicle
-      await supabase.from('vehicles').insert({
-        id: newVehicle.id,
-        owner_id: ownerId,
-        category: newVehicle.category,
-        brand: newVehicle.brand,
-        model: newVehicle.model,
-        model_year: newVehicle.model_year,
-        registration_number: newVehicle.registration_number,
-        color: newVehicle.color,
-        photo_url: newVehicle.photo_url || null,
-        qr_token: newVehicle.qr_token,
-        qr_active: newVehicle.qr_active,
-        mask_registration_number: newVehicle.mask_registration_number,
-        allow_public_phone_display: newVehicle.allow_public_phone_display,
-        show_owner_name: newVehicle.show_owner_name,
-      });
+      if (!rpcRes.success) {
+        // 2. Direct table fallback if RPC is not yet created
+        await supabase.from('profiles').upsert({
+          id: ownerId,
+          full_name: newProfile.full_name,
+          email: newProfile.email || null,
+          phone: newProfile.phone,
+          phone_verified: false,
+          residential_address: newProfile.residential_address || null,
+          updated_at: now,
+        });
 
-      // 3. Insert trusted contacts
-      if (newContacts.length > 0) {
-        await supabase.from('trusted_contacts').insert(
-          newContacts.map(c => ({
-            id: c.id,
-            owner_id: ownerId,
-            vehicle_id: vehicleId,
-            full_name: c.full_name,
-            relationship: c.relationship,
-            phone: c.phone,
-            email: c.email || null,
-            phone_verified: false,
-            is_primary: c.is_primary,
-            notify_on_emergency: c.notify_on_emergency,
-          }))
-        );
+        await supabase.from('vehicles').insert({
+          id: newVehicle.id,
+          owner_id: ownerId,
+          category: newVehicle.category,
+          brand: newVehicle.brand,
+          model: newVehicle.model,
+          model_year: newVehicle.model_year,
+          registration_number: newVehicle.registration_number,
+          color: newVehicle.color,
+          photo_url: newVehicle.photo_url || null,
+          qr_token: newVehicle.qr_token,
+          qr_active: newVehicle.qr_active,
+          mask_registration_number: newVehicle.mask_registration_number,
+          allow_public_phone_display: newVehicle.allow_public_phone_display,
+          show_owner_name: newVehicle.show_owner_name,
+        });
+
+        if (newContacts.length > 0) {
+          await supabase.from('trusted_contacts').insert(
+            newContacts.map(c => ({
+              id: c.id,
+              owner_id: ownerId,
+              vehicle_id: vehicleId,
+              full_name: c.full_name,
+              relationship: c.relationship,
+              phone: c.phone,
+              email: c.email || null,
+              phone_verified: false,
+              is_primary: c.is_primary,
+              notify_on_emergency: c.notify_on_emergency,
+            }))
+          );
+        }
       }
     } catch (err) {
       console.warn('Supabase insertion issue; local persistent fallback active:', err);
@@ -332,6 +375,39 @@ export function updateVehicle(vehicleId: string, updates: Partial<Vehicle>): Veh
 
   emitStorageEvent('vehicle_updated', { vehicleId });
   return vehicles[index];
+}
+
+/**
+ * Resilient synchronization helper: pushes any local vehicles to Supabase
+ * ensures that tokens generated on one client can be resolved from any mobile scanner
+ */
+export async function syncLocalVehiclesToSupabase(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  try {
+    const vehicles = getLocalTable<Vehicle>(STORAGE_KEYS.VEHICLES);
+    const profiles = getLocalTable<Profile>(STORAGE_KEYS.PROFILES);
+    const contacts = getLocalTable<TrustedContact>(STORAGE_KEYS.TRUSTED_CONTACTS);
+
+    for (const v of vehicles) {
+      const owner = profiles.find(p => p.id === v.owner_id) || {
+        id: v.owner_id,
+        full_name: 'Vehicle Owner',
+        phone: '9876543210',
+        phone_verified: false,
+        created_at: v.created_at,
+        updated_at: v.updated_at,
+      };
+      const vContacts = contacts.filter(c => c.vehicle_id === v.id || c.owner_id === v.owner_id);
+
+      await registerOwnerAndVehicleRpc({
+        profile: owner,
+        vehicle: v,
+        contacts: vContacts,
+      });
+    }
+  } catch (err) {
+    console.warn('Sync local vehicles exception:', err);
+  }
 }
 
 export function regenerateQRToken(vehicleId: string): { success: boolean; newToken?: string; error?: string } {
@@ -465,16 +541,30 @@ export async function getPublicVehicleByToken(token: string): Promise<{
     category: vehicle.category,
     brand: vehicle.brand,
     model: vehicle.model,
+    model_year: vehicle.model_year,
     color: vehicle.color,
     registration_display: displayReg,
     photo_url: vehicle.photo_url,
     owner_display_name: ownerDisplayName,
     trusted_contacts_count: trustedCount,
+    trusted_contacts: contacts
+      .filter(c => c.vehicle_id === vehicle.id || c.owner_id === vehicle.owner_id)
+      .map(c => ({
+        id: c.id,
+        full_name: c.full_name,
+        relationship: c.relationship,
+        phone: vehicle.allow_trusted_contacts_phone_display !== false ? c.phone : null,
+        is_primary: c.is_primary,
+      })),
     allow_contact_requests: vehicle.allow_contact_requests ?? true,
     allow_parking_reports: vehicle.allow_parking_reports ?? true,
     allow_emergency_alerts: vehicle.allow_emergency_alerts ?? true,
     allow_public_phone_display: Boolean(vehicle.allow_public_phone_display),
     owner_public_phone: vehicle.allow_public_phone_display && owner?.phone ? owner.phone : undefined,
+    allow_public_address_display: Boolean(vehicle.allow_public_address_display),
+    owner_public_address: vehicle.allow_public_address_display && owner?.residential_address ? owner.residential_address : undefined,
+    allow_trusted_contacts_display: vehicle.allow_trusted_contacts_display ?? true,
+    allow_trusted_contacts_phone_display: vehicle.allow_trusted_contacts_phone_display ?? true,
   };
 
   return {

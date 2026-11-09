@@ -65,7 +65,7 @@ export const QRSuccessPage: React.FC = () => {
               Registration Complete
             </span>
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 mt-0.5">
-              Your TRUSTFORGE QR is ready.
+              Your TrustFordge QR is ready.
             </h1>
             <p className="text-xs sm:text-sm text-slate-600 mt-1 max-w-xl">
               A secure, random public token has been generated for your{' '}

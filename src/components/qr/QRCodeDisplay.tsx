@@ -71,7 +71,7 @@ export const QRCodeDisplay: React.FC<QRCodeDisplayProps> = ({
   const handleDownloadPNG = () => {
     if (!canvasRef.current) return;
     const link = document.createElement('a');
-    link.download = `TRUSTFORGE-QR-${registrationNumber.replace(/\s+/g, '-')}.png`;
+    link.download = `TrustFordge-QR-${registrationNumber.replace(/\s+/g, '-')}.png`;
     link.href = canvasRef.current.toDataURL('image/png');
     link.click();
   };
@@ -197,7 +197,7 @@ export const QRCodeDisplay: React.FC<QRCodeDisplayProps> = ({
               </button>
             </div>
             <p className="text-[11px] text-slate-500 mt-1">
-              Never reveals your phone, email, address, or DOB. Only connects through TRUSTFORGE secure mediation.
+              Never reveals your phone, email, address, or DOB. Only connects through TrustFordge secure mediation.
             </p>
           </div>
 

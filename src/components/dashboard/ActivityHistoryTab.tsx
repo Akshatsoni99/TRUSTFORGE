@@ -108,7 +108,7 @@ export const ActivityHistoryTab: React.FC<ActivityHistoryTabProps> = ({ events }
                       {event.details?.message || 
                        (event.details?.reason ? `Parking obstruction reason: ${event.details.reason}` : '') ||
                        (event.details?.note ? event.details.note : '') ||
-                       'Direct scan from mobile camera via TRUSTFORGE gateway.'}
+                       'Direct scan from mobile camera via TrustFordge gateway.'}
                     </p>
 
                     {event.scanner_location && (

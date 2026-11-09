@@ -49,7 +49,7 @@ export const QRCardPrintable: React.FC<QRCardPrintableProps> = ({
           </div>
           <div className="text-left">
             <div className="font-extrabold text-xl tracking-tight text-slate-900">
-              TRUST<span className="text-blue-600">FORGE</span>
+              Trust<span className="text-blue-600">Fordge</span>
             </div>
             <div className="text-[10px] tracking-wider uppercase font-semibold text-slate-500 -mt-1">
               Vehicle Safety Network

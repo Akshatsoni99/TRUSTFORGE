@@ -82,7 +82,7 @@ export const LandingPage: React.FC = () => {
             "To create a connected vehicle assistance network where people can reach vehicle owners responsibly, protect personal information and make emergency communication easier."
           </blockquote>
           <p className="text-xs sm:text-sm text-slate-400 max-w-xl mx-auto leading-relaxed pt-2">
-            Leaving handwritten phone slips on dashboards exposes families to spam, telemarketing, and harassment. TRUSTFORGE replaces paper slips with secure mediated digital communication.
+            Leaving handwritten phone slips on dashboards exposes families to spam, telemarketing, and harassment. TrustFordge replaces paper slips with secure mediated digital communication.
           </p>
         </div>
       </section>
@@ -96,7 +96,7 @@ export const LandingPage: React.FC = () => {
             Simple 3-Step Process
           </span>
           <h2 className="text-2xl sm:text-4xl font-black text-slate-900 tracking-tight">
-            How TRUSTFORGE Works
+            How TrustFordge Works
           </h2>
           <p className="text-sm text-slate-500 max-w-xl mx-auto">
             Register your vehicle, print your secure decal, and receive assistance alerts in real time.

@@ -10,7 +10,8 @@ import {
   getOwnerContactRequests,
   getOwnerActivityEvents, 
   getOwnerTrustedContacts, 
-  getOwnerStats
+  getOwnerStats,
+  syncLocalVehiclesToSupabase
 } from '../lib/storage';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { 
@@ -132,6 +133,8 @@ export const DashboardPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // Resiliently ensure local vehicles are synchronized to Supabase
+    syncLocalVehiclesToSupabase().catch(() => {});
     loadData();
 
     // Listen to custom DB change events (real-time cross-tab updates when scanner actions occur)

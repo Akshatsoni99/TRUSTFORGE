@@ -173,6 +173,53 @@ export const PrivacySettingsTab: React.FC<PrivacySettingsTabProps> = ({
             />
           </button>
         </div>
+        {/* Allow Public Address Display */}
+        <div className="p-5 flex items-center justify-between gap-4">
+          <div className="space-y-0.5">
+            <span className="text-xs font-bold text-slate-900 block">
+              Allow Public Address Sharing on QR Scanner Page
+            </span>
+            <p className="text-xs text-slate-500 max-w-lg">
+              (Private by default). If enabled, your residential address will be shown to people scanning your QR code. If disabled, your address is strictly withheld.
+            </p>
+          </div>
+          <button
+            onClick={() => handleToggle('allow_public_address_display', Boolean(primaryVehicle.allow_public_address_display))}
+            className={`w-12 h-6 rounded-full transition-colors relative shrink-0 ${
+              primaryVehicle.allow_public_address_display ? 'bg-amber-600' : 'bg-slate-300'
+            }`}
+          >
+            <div
+              className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-1 left-1 ${
+                primaryVehicle.allow_public_address_display ? 'translate-x-6' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Allow Trusted Contacts Display */}
+        <div className="p-5 flex items-center justify-between gap-4">
+          <div className="space-y-0.5">
+            <span className="text-xs font-bold text-slate-900 block">
+              Allow Contacting Trusted Family Members
+            </span>
+            <p className="text-xs text-slate-500 max-w-lg">
+              Permits individuals scanning the QR code to see verified emergency contacts and call them if needed.
+            </p>
+          </div>
+          <button
+            onClick={() => handleToggle('allow_trusted_contacts_display', primaryVehicle.allow_trusted_contacts_display ?? true)}
+            className={`w-12 h-6 rounded-full transition-colors relative shrink-0 ${
+              (primaryVehicle.allow_trusted_contacts_display ?? true) ? 'bg-emerald-600' : 'bg-slate-300'
+            }`}
+          >
+            <div
+              className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-1 left-1 ${
+                (primaryVehicle.allow_trusted_contacts_display ?? true) ? 'translate-x-6' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
       </div>
 
       {/* Security Architecture Statement */}
@@ -184,7 +231,7 @@ export const PrivacySettingsTab: React.FC<PrivacySettingsTabProps> = ({
           </h4>
         </div>
         <p className="text-xs text-slate-300 leading-relaxed">
-          TRUSTFORGE enforces database-level Row Level Security in Supabase PostgreSQL. Your residential address, private email, personal phone, and trusted contacts are completely inaccessible without your cryptographic session credentials.
+          TrustFordge enforces database-level Row Level Security in Supabase PostgreSQL. Your residential address, private email, personal phone, and trusted contacts are completely inaccessible without your cryptographic session credentials.
         </p>
       </div>
     </div>

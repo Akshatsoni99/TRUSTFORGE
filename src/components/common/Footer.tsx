@@ -33,14 +33,14 @@ export const Footer: React.FC = () => {
                 <Shield className="w-5 h-5 text-white" />
               </div>
               <span className="font-extrabold text-xl tracking-tight text-white">
-                TRUST<span className="text-brand-400">FORGE</span>
+                Trust<span className="text-brand-400">Fordge</span>
               </span>
             </div>
             <p className="text-sm text-slate-400 max-w-md leading-relaxed">
               "One Scan. The Right Help. At The Right Time."
             </p>
             <p className="text-xs text-slate-400 max-w-md leading-relaxed">
-              TRUSTFORGE helps citizens reach vehicle owners responsibly when vehicles obstruct access, parking creates inconvenience, or someone nearby needs emergency assistance — without ever exposing private contact numbers.
+              TrustFordge helps citizens reach vehicle owners responsibly when vehicles obstruct access, parking creates inconvenience, or someone nearby needs emergency assistance — without ever exposing private contact numbers.
             </p>
             <div className="pt-2 flex items-center gap-2 text-xs text-slate-400">
               <Lock className="w-3.5 h-3.5 text-brand-400" />
@@ -109,7 +109,7 @@ export const Footer: React.FC = () => {
         </div>
 
         <div className="mt-12 pt-8 border-t border-slate-800 text-xs flex flex-col sm:flex-row items-center justify-between gap-4 text-slate-400">
-          <p>© {new Date().getFullYear()} TRUSTFORGE Mobility Safety Network. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} TrustFordge Mobility Safety Network. All rights reserved.</p>
           <div className="flex items-center gap-1 text-slate-400">
             <span>Built for vehicle safety, privacy, and community harmony in India</span>
           </div>

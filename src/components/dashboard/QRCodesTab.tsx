@@ -95,7 +95,7 @@ export const QRCodesTab: React.FC<QRCodesTabProps> = ({
           <div className="bg-slate-800/60 p-3 rounded-lg border border-slate-700/60 space-y-1">
             <strong className="text-white block font-semibold">Mediated Dispatch</strong>
             <p className="text-slate-400 leading-relaxed text-[11px]">
-              All parking obstruction alerts and emergency pings are routed through the TRUSTFORGE server layer. Scanners cannot inspect or harvest recipient phone numbers.
+              All parking obstruction alerts and emergency pings are routed through the TrustFordge server layer. Scanners cannot inspect or harvest recipient phone numbers.
             </p>
           </div>
         </div>

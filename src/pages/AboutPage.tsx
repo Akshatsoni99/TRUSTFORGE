@@ -23,7 +23,7 @@ export const AboutPage: React.FC = () => {
           Privacy-First Vehicle Communication
         </h1>
         <p className="text-base text-slate-600 leading-relaxed max-w-2xl">
-          TRUSTFORGE was built to eliminate the safety risks of displaying personal phone numbers on vehicles while ensuring owners can be reached during parking obstructions or critical emergencies.
+          TrustFordge was built to eliminate the safety risks of displaying personal phone numbers on vehicles while ensuring owners can be reached during parking obstructions or critical emergencies.
         </p>
       </div>
 
@@ -46,7 +46,7 @@ export const AboutPage: React.FC = () => {
             <Shield className="w-5 h-5" />
           </div>
           <h3 className="text-base font-bold text-slate-900">
-            The TRUSTFORGE Solution
+            The TrustFordge Solution
           </h3>
           <p className="text-xs text-slate-700 leading-relaxed">
             A single tamper-resistant QR code backed by mediated server architecture. Scanners interact with an intuitive web application to report parking blocks or trigger emergency alerts, while all personal contact data remains 100% hidden.

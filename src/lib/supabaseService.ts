@@ -14,7 +14,7 @@ import {
 
 /**
  * Normalizes identifier (phone or email) into an auth-compliant email string.
- * For phone-first users: converts 10-digit number into `${cleanPhone}@owner.trustforge.app`
+ * For phone-first users: converts 10-digit number into `${cleanPhone}@users.trustfordge.com`
  */
 export function formatAuthEmail(identifier: string): string {
   const trimmed = identifier.trim().toLowerCase();
@@ -22,7 +22,7 @@ export function formatAuthEmail(identifier: string): string {
     return trimmed;
   }
   const cleanPhone = trimmed.replace(/[\s\-\(\)]/g, '').replace(/^\+91|^91|^0/, '');
-  return `${cleanPhone}@owner.trustforge.app`;
+  return `${cleanPhone}@users.trustfordge.com`;
 }
 
 // ============================================================================
@@ -43,7 +43,7 @@ export async function signUpOwnerWithSupabase(params: {
   const cleanPhone = params.phone.replace(/[\s\-\(\)]/g, '').replace(/^\+91|^91|^0/, '');
   const authEmail = params.email?.trim() 
     ? params.email.trim().toLowerCase() 
-    : `${cleanPhone}@owner.trustforge.app`;
+    : `${cleanPhone}@users.trustfordge.com`;
   
   // Default fallback password for non-blocking onboarding if omitted
   const authPassword = params.password && params.password.length >= 6 
@@ -363,6 +363,59 @@ export async function updateEmergencyAlertStatusInDb(
     return !error;
   } catch {
     return false;
+  }
+}
+
+// ============================================================================
+// ATOMIC OWNER & VEHICLE REGISTRATION RPC
+// ============================================================================
+
+export async function registerOwnerAndVehicleRpc(params: {
+  profile: Partial<Profile>;
+  vehicle: Partial<Vehicle>;
+  contacts: Partial<TrustedContact>[];
+}): Promise<{
+  success: boolean;
+  ownerId?: string;
+  vehicleId?: string;
+  qrToken?: string;
+  error?: string;
+  message?: string;
+}> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { success: false, error: 'NOT_CONFIGURED', message: 'Backend is offline.' };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('register_owner_and_vehicle', {
+      p_profile: params.profile,
+      p_vehicle: params.vehicle,
+      p_contacts: params.contacts,
+    });
+
+    if (error) {
+      console.warn('RPC register_owner_and_vehicle error:', error);
+      return { success: false, error: 'RPC_ERROR', message: error.message };
+    }
+
+    if (data && data.success) {
+      return {
+        success: true,
+        ownerId: data.owner_id,
+        vehicleId: data.vehicle_id,
+        qrToken: data.qr_token,
+        message: data.message,
+      };
+    }
+
+    return {
+      success: false,
+      error: data?.error || 'REGISTRATION_FAILED',
+      message: data?.message || 'Could not register vehicle.',
+    };
+  } catch (err: any) {
+    console.warn('registerOwnerAndVehicleRpc exception:', err);
+    return { success: false, error: 'EXCEPTION', message: err.message };
   }
 }
 

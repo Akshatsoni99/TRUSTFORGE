@@ -70,6 +70,7 @@ export const OnboardingPage: React.FC = () => {
     ],
     maskRegistrationNumber: false,
     allowPublicPhoneDisplay: false,
+    allowPublicAddressDisplay: false,
     showOwnerName: true,
     consentAgreed: false,
   });
@@ -794,6 +795,23 @@ export const OnboardingPage: React.FC = () => {
                     </span>
                   </div>
                 </label>
+
+                <label className="flex items-start gap-3 cursor-pointer text-xs pt-2 border-t border-slate-800">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(formData.allowPublicAddressDisplay)}
+                    onChange={e => setFormData({ ...formData, allowPublicAddressDisplay: e.target.checked })}
+                    className="mt-0.5 rounded text-brand-500 focus:ring-brand-400"
+                  />
+                  <div>
+                    <span className="font-semibold block text-slate-200">
+                      Share residential address on public vehicle page
+                    </span>
+                    <span className="text-slate-400 text-[11px]">
+                      (Private by default). Only enable if you explicitly want individuals scanning your vehicle to view your residential address.
+                    </span>
+                  </div>
+                </label>
               </div>
 
               {/* Consent Agreement */}
@@ -806,7 +824,7 @@ export const OnboardingPage: React.FC = () => {
                     className="mt-0.5 rounded text-brand-600 focus:ring-brand-500"
                   />
                   <span>
-                    I confirm that I am the authorized owner or primary driver of this vehicle. I consent to TRUSTFORGE mediating contact requests and emergency notifications without exposing my personal contact numbers.
+                    I confirm that I am the authorized owner or primary driver of this vehicle. I consent to TrustFordge mediating contact requests and emergency notifications without exposing my personal contact numbers.
                   </span>
                 </label>
                 {errors.consent && <p className="text-xs text-rose-500">{errors.consent}</p>}

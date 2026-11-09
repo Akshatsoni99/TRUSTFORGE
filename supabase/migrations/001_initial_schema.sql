@@ -35,7 +35,7 @@ CREATE POLICY "Users can view their own profile"
 DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
 CREATE POLICY "Users can insert their own profile"
   ON public.profiles FOR INSERT
-  WITH CHECK (auth.uid() = id);
+  WITH CHECK (auth.uid() = id OR auth.uid() IS NULL);
 
 DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
 CREATE POLICY "Users can update their own profile"
@@ -65,9 +65,16 @@ CREATE TABLE IF NOT EXISTS public.vehicles (
   mask_registration_number BOOLEAN NOT NULL DEFAULT false,
   allow_public_phone_display BOOLEAN NOT NULL DEFAULT false,
   show_owner_name BOOLEAN NOT NULL DEFAULT true,
+  allow_public_address_display BOOLEAN NOT NULL DEFAULT false,
+  allow_trusted_contacts_display BOOLEAN NOT NULL DEFAULT true,
+  allow_trusted_contacts_phone_display BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
+
+ALTER TABLE public.vehicles ADD COLUMN IF NOT EXISTS allow_public_address_display BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE public.vehicles ADD COLUMN IF NOT EXISTS allow_trusted_contacts_display BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE public.vehicles ADD COLUMN IF NOT EXISTS allow_trusted_contacts_phone_display BOOLEAN NOT NULL DEFAULT true;
 
 CREATE INDEX IF NOT EXISTS idx_vehicles_owner_id ON public.vehicles(owner_id);
 CREATE INDEX IF NOT EXISTS idx_vehicles_qr_token ON public.vehicles(qr_token);
@@ -82,7 +89,7 @@ CREATE POLICY "Owners can view their own vehicles"
 DROP POLICY IF EXISTS "Owners can insert their own vehicles" ON public.vehicles;
 CREATE POLICY "Owners can insert their own vehicles"
   ON public.vehicles FOR INSERT
-  WITH CHECK (auth.uid() = owner_id);
+  WITH CHECK (auth.uid() = owner_id OR auth.uid() IS NULL);
 
 DROP POLICY IF EXISTS "Owners can update their own vehicles" ON public.vehicles;
 CREATE POLICY "Owners can update their own vehicles"
@@ -126,7 +133,7 @@ CREATE POLICY "Owners can view their own trusted contacts"
 DROP POLICY IF EXISTS "Owners can insert their own trusted contacts" ON public.trusted_contacts;
 CREATE POLICY "Owners can insert their own trusted contacts"
   ON public.trusted_contacts FOR INSERT
-  WITH CHECK (auth.uid() = owner_id);
+  WITH CHECK (auth.uid() = owner_id OR auth.uid() IS NULL);
 
 DROP POLICY IF EXISTS "Owners can update their own trusted contacts" ON public.trusted_contacts;
 CREATE POLICY "Owners can update their own trusted contacts"
@@ -336,6 +343,8 @@ DECLARE
   v_display_reg TEXT;
   v_owner_display_name TEXT;
   v_public_phone TEXT := NULL;
+  v_public_address TEXT := NULL;
+  v_contacts_json JSONB := '[]'::jsonb;
   v_clean_token TEXT;
 BEGIN
   -- Strict Token Format Validation
@@ -395,10 +404,34 @@ BEGIN
     v_public_phone := v_profile.phone;
   END IF;
 
-  -- Count trusted contacts without revealing any personal or contact details
+  -- Strict Address Redaction: Address MUST BE PRIVATE BY DEFAULT.
+  -- Only reveal if owner explicitly enabled allow_public_address_display AND address is present
+  IF COALESCE(v_vehicle.allow_public_address_display, false) AND FOUND AND v_profile.residential_address IS NOT NULL THEN
+    v_public_address := v_profile.residential_address;
+  END IF;
+
+  -- Count trusted contacts without revealing unapproved personal or contact details
   SELECT count(*) INTO v_trusted_count
   FROM public.trusted_contacts
   WHERE vehicle_id = v_vehicle.id OR (vehicle_id IS NULL AND owner_id = v_vehicle.owner_id);
+
+  -- Fetch trusted contacts for public display (names, relationships, and conditionally phones)
+  IF COALESCE(v_vehicle.allow_trusted_contacts_display, true) THEN
+    SELECT COALESCE(
+      jsonb_agg(
+        jsonb_build_object(
+          'id', tc.id,
+          'full_name', tc.full_name,
+          'relationship', tc.relationship,
+          'phone', CASE WHEN COALESCE(v_vehicle.allow_trusted_contacts_phone_display, true) THEN tc.phone ELSE NULL END,
+          'is_primary', tc.is_primary
+        ) ORDER BY tc.is_primary DESC, tc.created_at ASC
+      ),
+      '[]'::jsonb
+    ) INTO v_contacts_json
+    FROM public.trusted_contacts tc
+    WHERE tc.vehicle_id = v_vehicle.id OR (tc.vehicle_id IS NULL AND tc.owner_id = v_vehicle.owner_id);
+  END IF;
 
   -- Mask registration number if requested by owner
   IF v_vehicle.mask_registration_number THEN
@@ -419,16 +452,22 @@ BEGIN
       'category', v_vehicle.category,
       'brand', v_vehicle.brand,
       'model', v_vehicle.model,
+      'model_year', v_vehicle.model_year,
       'color', v_vehicle.color,
       'registration_display', v_display_reg,
       'photo_url', v_vehicle.photo_url,
       'owner_display_name', v_owner_display_name,
       'trusted_contacts_count', v_trusted_count,
+      'trusted_contacts', v_contacts_json,
       'allow_contact_requests', v_vehicle.allow_contact_requests,
       'allow_parking_reports', v_vehicle.allow_parking_reports,
       'allow_emergency_alerts', v_vehicle.allow_emergency_alerts,
       'allow_public_phone_display', v_vehicle.allow_public_phone_display,
-      'owner_public_phone', v_public_phone
+      'owner_public_phone', v_public_phone,
+      'allow_public_address_display', COALESCE(v_vehicle.allow_public_address_display, false),
+      'owner_public_address', v_public_address,
+      'allow_trusted_contacts_display', COALESCE(v_vehicle.allow_trusted_contacts_display, true),
+      'allow_trusted_contacts_phone_display', COALESCE(v_vehicle.allow_trusted_contacts_phone_display, true)
     )
   );
 END;
@@ -830,17 +869,179 @@ END;
 $$;
 
 -- ============================================================================
+-- Function 5: Atomic Owner & Vehicle Registration (Direct & Resilient)
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.register_owner_and_vehicle(
+  p_profile JSONB,
+  p_vehicle JSONB,
+  p_contacts JSONB DEFAULT '[]'::jsonb
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_owner_id UUID;
+  v_vehicle_id UUID;
+  v_qr_token TEXT;
+  v_contact JSONB;
+  v_reg_number TEXT;
+  v_phone TEXT;
+BEGIN
+  -- 1. Validate inputs
+  IF p_profile IS NULL OR p_vehicle IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'INVALID_INPUT', 'message', 'Profile and vehicle data required.');
+  END IF;
+
+  v_phone := trim(COALESCE(p_profile->>'phone', ''));
+  IF length(v_phone) < 10 THEN
+    RETURN jsonb_build_object('success', false, 'error', 'INVALID_PHONE', 'message', 'Valid mobile number required.');
+  END IF;
+
+  v_reg_number := upper(trim(COALESCE(p_vehicle->>'registration_number', '')));
+  IF length(v_reg_number) < 4 THEN
+    RETURN jsonb_build_object('success', false, 'error', 'INVALID_REG_NUMBER', 'message', 'Valid vehicle registration number required.');
+  END IF;
+
+  -- 2. Owner ID resolution: use auth.uid() if logged in, or provided UUID, or generate new UUID
+  IF auth.uid() IS NOT NULL THEN
+    v_owner_id := auth.uid();
+  ELSIF p_profile->>'id' IS NOT NULL AND (p_profile->>'id') ~ '^[0-9a-fA-F-]{36}$' THEN
+    v_owner_id := (p_profile->>'id')::UUID;
+  ELSE
+    v_owner_id := gen_random_uuid();
+  END IF;
+
+  -- 3. Upsert profile
+  INSERT INTO public.profiles (
+    id, full_name, email, phone, phone_verified, residential_address, updated_at
+  )
+  VALUES (
+    v_owner_id,
+    COALESCE(NULLIF(trim(p_profile->>'full_name'), ''), 'Vehicle Owner'),
+    NULLIF(trim(p_profile->>'email'), ''),
+    v_phone,
+    false,
+    NULLIF(trim(p_profile->>'residential_address'), ''),
+    timezone('utc'::text, now())
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    full_name = EXCLUDED.full_name,
+    email = COALESCE(EXCLUDED.email, profiles.email),
+    phone = EXCLUDED.phone,
+    residential_address = COALESCE(EXCLUDED.residential_address, profiles.residential_address),
+    updated_at = timezone('utc'::text, now());
+
+  -- 4. Vehicle ID & QR Token resolution
+  IF p_vehicle->>'id' IS NOT NULL AND (p_vehicle->>'id') ~ '^[0-9a-fA-F-]{36}$' THEN
+    v_vehicle_id := (p_vehicle->>'id')::UUID;
+  ELSE
+    v_vehicle_id := gen_random_uuid();
+  END IF;
+
+  v_qr_token := trim(COALESCE(p_vehicle->>'qr_token', ''));
+  IF length(v_qr_token) < 16 THEN
+    v_qr_token := encode(gen_random_bytes(16), 'hex');
+  END IF;
+
+  -- 5. Upsert vehicle
+  INSERT INTO public.vehicles (
+    id, owner_id, category, brand, model, model_year,
+    registration_number, color, photo_url, qr_token, qr_active,
+    allow_contact_requests, allow_parking_reports, allow_emergency_alerts,
+    mask_registration_number, allow_public_phone_display, show_owner_name,
+    allow_public_address_display, allow_trusted_contacts_display, allow_trusted_contacts_phone_display,
+    created_at, updated_at
+  )
+  VALUES (
+    v_vehicle_id,
+    v_owner_id,
+    COALESCE(NULLIF(p_vehicle->>'category', ''), 'car'),
+    COALESCE(NULLIF(trim(p_vehicle->>'brand'), ''), 'Generic'),
+    COALESCE(NULLIF(trim(p_vehicle->>'model'), ''), 'Vehicle'),
+    COALESCE((p_vehicle->>'model_year')::INTEGER, extract(year from now())::integer),
+    v_reg_number,
+    COALESCE(NULLIF(trim(p_vehicle->>'color'), ''), 'Neutral'),
+    NULLIF(trim(p_vehicle->>'photo_url'), ''),
+    v_qr_token,
+    COALESCE((p_vehicle->>'qr_active')::BOOLEAN, true),
+    COALESCE((p_vehicle->>'allow_contact_requests')::BOOLEAN, true),
+    COALESCE((p_vehicle->>'allow_parking_reports')::BOOLEAN, true),
+    COALESCE((p_vehicle->>'allow_emergency_alerts')::BOOLEAN, true),
+    COALESCE((p_vehicle->>'mask_registration_number')::BOOLEAN, false),
+    COALESCE((p_vehicle->>'allow_public_phone_display')::BOOLEAN, false),
+    COALESCE((p_vehicle->>'show_owner_name')::BOOLEAN, true),
+    COALESCE((p_vehicle->>'allow_public_address_display')::BOOLEAN, false),
+    COALESCE((p_vehicle->>'allow_trusted_contacts_display')::BOOLEAN, true),
+    COALESCE((p_vehicle->>'allow_trusted_contacts_phone_display')::BOOLEAN, true),
+    timezone('utc'::text, now()),
+    timezone('utc'::text, now())
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    brand = EXCLUDED.brand,
+    model = EXCLUDED.model,
+    model_year = EXCLUDED.model_year,
+    registration_number = EXCLUDED.registration_number,
+    color = EXCLUDED.color,
+    photo_url = COALESCE(EXCLUDED.photo_url, vehicles.photo_url),
+    qr_token = EXCLUDED.qr_token,
+    qr_active = EXCLUDED.qr_active,
+    allow_public_phone_display = EXCLUDED.allow_public_phone_display,
+    allow_public_address_display = EXCLUDED.allow_public_address_display,
+    allow_trusted_contacts_display = EXCLUDED.allow_trusted_contacts_display,
+    allow_trusted_contacts_phone_display = EXCLUDED.allow_trusted_contacts_phone_display,
+    updated_at = timezone('utc'::text, now());
+
+  -- 6. Insert trusted contacts if provided
+  IF p_contacts IS NOT NULL AND jsonb_typeof(p_contacts) = 'array' THEN
+    FOR v_contact IN SELECT * FROM jsonb_array_elements(p_contacts)
+    LOOP
+      IF length(trim(COALESCE(v_contact->>'phone', ''))) >= 10 THEN
+        INSERT INTO public.trusted_contacts (
+          id, owner_id, vehicle_id, full_name, relationship, phone, email,
+          is_primary, notify_on_emergency, created_at, updated_at
+        ) VALUES (
+          CASE WHEN (v_contact->>'id') ~ '^[0-9a-fA-F-]{36}$' THEN (v_contact->>'id')::UUID ELSE gen_random_uuid() END,
+          v_owner_id,
+          v_vehicle_id,
+          COALESCE(NULLIF(trim(v_contact->>'full_name'), ''), 'Trusted Contact'),
+          COALESCE(NULLIF(trim(v_contact->>'relationship'), ''), 'Family Member'),
+          trim(v_contact->>'phone'),
+          NULLIF(trim(v_contact->>'email'), ''),
+          COALESCE((v_contact->>'is_primary')::BOOLEAN, false),
+          COALESCE((v_contact->>'notify_on_emergency')::BOOLEAN, true),
+          timezone('utc'::text, now()),
+          timezone('utc'::text, now())
+        );
+      END IF;
+    END LOOP;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'owner_id', v_owner_id,
+    'vehicle_id', v_vehicle_id,
+    'qr_token', v_qr_token,
+    'message', 'Vehicle and owner registered successfully.'
+  );
+END;
+$$;
+
+-- ============================================================================
 -- EXPLICIT FUNCTION PERMISSIONS (REVOKE FROM PUBLIC, GRANT TO ANON & AUTHENTICATED)
 -- ============================================================================
 REVOKE ALL ON FUNCTION public.get_public_vehicle_by_token(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.submit_public_contact_request(TEXT, TEXT, TEXT, TEXT, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.submit_public_parking_report(TEXT, TEXT, TEXT, JSONB, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.submit_public_emergency_alert(TEXT, TEXT, JSONB) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.register_owner_and_vehicle(JSONB, JSONB, JSONB) FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION public.get_public_vehicle_by_token(TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.submit_public_contact_request(TEXT, TEXT, TEXT, TEXT, JSONB) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.submit_public_parking_report(TEXT, TEXT, TEXT, JSONB, TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.submit_public_emergency_alert(TEXT, TEXT, JSONB) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.register_owner_and_vehicle(JSONB, JSONB, JSONB) TO anon, authenticated;
 
 -- ============================================================================
 -- REALTIME SUBSCRIPTIONS ENABLING (IDEMPOTENT)

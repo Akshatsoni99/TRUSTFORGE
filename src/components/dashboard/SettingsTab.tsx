@@ -27,7 +27,7 @@ export const SettingsTab: React.FC = () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `trustforge-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `trustfordge-backup-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
     } catch (err) {
       alert('Could not export database: ' + err);

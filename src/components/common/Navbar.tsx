@@ -28,7 +28,7 @@ export const Navbar: React.FC = () => {
             </div>
             <div className="flex flex-col">
               <span className="font-extrabold text-lg tracking-tight text-slate-900">
-                TRUST<span className="text-brand-600">FORGE</span>
+                Trust<span className="text-brand-600">Fordge</span>
               </span>
               <span className="text-[10px] font-medium tracking-wider text-slate-500 uppercase -mt-1">
                 Vehicle Safety Network

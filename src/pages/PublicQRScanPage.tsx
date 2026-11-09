@@ -7,7 +7,6 @@ import {
   Phone,
   AlertTriangle, 
   AlertOctagon, 
-  MessageSquare, 
   Users, 
   MapPin, 
   CheckCircle2, 
@@ -17,7 +16,13 @@ import {
   Send, 
   Navigation,
   ZoomIn,
-  Info
+  MessageCircle,
+  Flame,
+  Ambulance,
+  BadgeAlert,
+  Calendar,
+  Palette,
+  UserCheck
 } from 'lucide-react';
 import { 
   getPublicVehicleByToken, 
@@ -25,8 +30,8 @@ import {
   submitParkingReport, 
   submitEmergencyAlert 
 } from '../lib/storage';
-import { PublicVehicleData, ParkingReason, ContactRequestCategory } from '../types';
-import { checkRateLimit } from '../lib/utils';
+import { PublicVehicleData, PublicTrustedContact } from '../types';
+import { checkRateLimit, formatVehicleNumber } from '../lib/utils';
 
 export const PublicQRScanPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
@@ -36,27 +41,22 @@ export const PublicQRScanPage: React.FC = () => {
   const [errorStatus, setErrorStatus] = useState<'INVALID_TOKEN' | 'INACTIVE_QR' | 'NOT_FOUND' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
-  // Active Action Modal State
-  const [activeModal, setActiveModal] = useState<'contact' | 'parking' | 'emergency' | null>(null);
-  const [submittingAction, setSubmittingAction] = useState(false);
-  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
-
   // Lightbox Preview State for Vehicle Photograph
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
-  // Form states for modals
-  const [contactCategory, setContactCategory] = useState<ContactRequestCategory>('general');
-  const [contactMessage, setContactMessage] = useState('');
-  const [callerPhone, setCallerPhone] = useState('');
-
-  const [parkingReason, setParkingReason] = useState<ParkingReason>('blocking_entrance');
-  const [parkingDescription, setParkingDescription] = useState('');
-  const [scannerPhoneOpt, setScannerPhoneOpt] = useState('');
-
-  const [emergencyMessage, setEmergencyMessage] = useState('');
+  // Feature Three: Report a Vehicle Issue Form State
+  const [issueType, setIssueType] = useState<'parking' | 'blocking' | 'damage' | 'other'>('parking');
+  const [issueDescription, setIssueDescription] = useState('');
+  const [reporterPhone, setReporterPhone] = useState('');
   const [scannerLocation, setScannerLocation] = useState<{ latitude: number; longitude: number } | undefined>();
   const [requestingLocation, setRequestingLocation] = useState(false);
   const [locationConsentGranted, setLocationConsentGranted] = useState(false);
+  const [submittingIssue, setSubmittingIssue] = useState(false);
+  const [issueSuccess, setIssueSuccess] = useState<string | null>(null);
+
+  // Feature Two: Direct contact notify modal state
+  const [notifyingContactId, setNotifyingContactId] = useState<string | null>(null);
+  const [notifiedMessage, setNotifiedMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -75,7 +75,7 @@ export const PublicQRScanPage: React.FC = () => {
           setVehicle(res.vehicle);
         } else {
           setErrorStatus(res.error || 'INVALID_TOKEN');
-          setErrorMessage(res.message || 'Vehicle QR code is not recognized.');
+          setErrorMessage(res.message || 'This vehicle QR code is not recognized or has been invalidated.');
         }
       } catch (err: any) {
         if (!isMounted) return;
@@ -92,7 +92,7 @@ export const PublicQRScanPage: React.FC = () => {
     };
   }, [token]);
 
-  // Request browser location with explicit consent
+  // Request browser location with explicit user consent
   const handleRequestLocation = () => {
     if (!navigator.geolocation) {
       alert('Geolocation is not supported by your browser.');
@@ -116,178 +116,123 @@ export const PublicQRScanPage: React.FC = () => {
     );
   };
 
-  // Submit Contact Request
-  const handleSubmitContact = async () => {
-    if (!vehicle || !token || submittingAction) return;
-    const rateCheck = checkRateLimit(`contact_${vehicle.id}`, 20);
-    if (!rateCheck.allowed) {
-      alert(`Please wait ${rateCheck.remainingSeconds}s before sending another contact request to this vehicle.`);
+  // Submit Feature Three: Report a Vehicle Issue Form
+  const handleSubmitIssue = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!vehicle || !token || submittingIssue) return;
+
+    if (!issueDescription.trim()) {
+      alert('Please enter a brief description of the issue.');
       return;
     }
 
-    setSubmittingAction(true);
-    try {
-      const result = await submitContactRequest({
-        vehicleId: vehicle.id,
-        category: contactCategory,
-        message: contactMessage,
-        callerContact: callerPhone,
-        location: scannerLocation,
-        token: token,
-      });
-
-      setActiveModal(null);
-      setContactMessage('');
-      setCallerPhone('');
-      setActionSuccess(result.message || 'Your message has been dispatched to the vehicle owner.');
-    } catch (err: any) {
-      alert(err?.message || 'Failed to send contact request. Please try again.');
-    } finally {
-      setSubmittingAction(false);
-    }
-  };
-
-  // Submit Parking Report
-  const handleSubmitParking = async () => {
-    if (!vehicle || !token || submittingAction) return;
-    const rateCheck = checkRateLimit(`parking_${vehicle.id}`, 20);
+    const rateCheck = checkRateLimit(`issue_${vehicle.id}`, 15);
     if (!rateCheck.allowed) {
-      alert(`Please wait ${rateCheck.remainingSeconds}s before submitting another parking report.`);
+      alert(`Please wait ${rateCheck.remainingSeconds}s before submitting another report.`);
       return;
     }
 
-    setSubmittingAction(true);
+    setSubmittingIssue(true);
     try {
+      // Map UI issueType to backend reason/category
+      const reasonMapping: Record<string, any> = {
+        parking: 'wrong_parking',
+        blocking: 'blocking_entrance',
+        damage: 'other',
+        other: 'other',
+      };
+
       await submitParkingReport({
         vehicleId: vehicle.id,
-        reason: parkingReason,
-        description: parkingDescription,
+        reason: reasonMapping[issueType] || 'other',
+        description: `[${issueType.toUpperCase()}] ${issueDescription.trim()}`,
         location: scannerLocation,
-        scannerContact: scannerPhoneOpt,
+        scannerContact: reporterPhone.trim() || undefined,
         token: token,
       });
 
-      setActiveModal(null);
-      setParkingDescription('');
-      setScannerPhoneOpt('');
-      setActionSuccess('Parking report submitted. The vehicle owner has been notified in their dashboard.');
+      setIssueSuccess('Your vehicle issue report has been logged in the owner’s dashboard. (UI note: No external SMS or WhatsApp was delivered for this demo).');
+      setIssueDescription('');
+      setReporterPhone('');
     } catch (err: any) {
-      alert(err?.message || 'Failed to submit parking report. Please try again.');
+      alert(err?.message || 'Failed to submit report. Please try again.');
     } finally {
-      setSubmittingAction(false);
+      setSubmittingIssue(false);
     }
   };
 
-  // Submit Emergency Alert
-  const handleSubmitEmergency = async () => {
-    if (!vehicle || !token || submittingAction) return;
-    const rateCheck = checkRateLimit(`emergency_${vehicle.id}`, 15);
-    if (!rateCheck.allowed) {
-      alert(`Please wait ${rateCheck.remainingSeconds}s before sending another emergency request.`);
-      return;
-    }
-
-    setSubmittingAction(true);
+  // Dispatch emergency notification to a masked trusted contact
+  const handleNotifyContact = async (contact: PublicTrustedContact) => {
+    if (!vehicle || !token) return;
+    setNotifyingContactId(contact.id);
     try {
-      const result = await submitEmergencyAlert({
+      await submitEmergencyAlert({
         vehicleId: vehicle.id,
-        message: emergencyMessage || 'Emergency assistance requested near your vehicle.',
-        location: scannerLocation,
+        message: `Assistance ping for trusted contact: ${contact.full_name} (${contact.relationship})`,
         token: token,
       });
-
-      setActiveModal(null);
-      setEmergencyMessage('');
-      setActionSuccess(
-        result.message ||
-        'Emergency alert recorded in vehicle owner dashboard. Trusted contacts were NOT notified (external SMS/WhatsApp gateway is not configured). For immediate life safety, call 112 directly.'
-      );
+      setNotifiedMessage(`Incident logged in dashboard for ${contact.full_name} (${contact.relationship}). External SMS dispatch is unconfigured for this demo.`);
     } catch (err: any) {
-      alert(err?.message || 'Failed to record emergency alert. Please try again.');
+      alert(err?.message || 'Could not record notification.');
     } finally {
-      setSubmittingAction(false);
+      setNotifyingContactId(null);
     }
   };
 
-  // Trigger Mediated Trusted Contacts Request
-  const handleNotifyTrustedContacts = async () => {
-    if (!vehicle || submittingAction) return;
-    const rateCheck = checkRateLimit(`contacts_${vehicle.id}`, 25);
-    if (!rateCheck.allowed) {
-      alert(`Please wait ${rateCheck.remainingSeconds}s before submitting again.`);
-      return;
-    }
-
-    setSubmittingAction(true);
-    try {
-      const result = await submitEmergencyAlert({
-        vehicleId: vehicle.id,
-        message: 'Citizen requested trusted contacts be notified regarding vehicle status.',
-        location: scannerLocation,
-        token: token,
-      });
-
-      setActionSuccess(
-        result.message ||
-        'Emergency notification recorded in vehicle dashboard. Trusted contacts were NOT notified because external SMS dispatch is not configured. For immediate emergencies, use the direct 112 call button below.'
-      );
-    } catch (err: any) {
-      alert(err?.message || 'Failed to record notification. Please try again.');
-    } finally {
-      setSubmittingAction(false);
-    }
-  };
-
+  // Loading Screen
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
-        <div className="flex flex-col items-center gap-3">
+        <div className="flex flex-col items-center gap-3 text-center">
           <div className="w-10 h-10 border-4 border-brand-200 border-t-brand-600 rounded-full animate-spin" />
-          <p className="text-xs font-semibold text-slate-600">Verifying vehicle security token...</p>
+          <p className="text-sm font-semibold text-slate-800">Verifying vehicle security token...</p>
+          <p className="text-xs text-slate-500">Connecting to TrustFordge Safety Network</p>
         </div>
       </div>
     );
   }
 
-  // Error / Inactive QR State
+  // Error / Inactive Token Screen
   if (errorStatus || !vehicle) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
-        <div className="max-w-md w-full bg-white rounded-2xl border border-slate-200 shadow-card p-6 sm:p-8 text-center space-y-4">
+        <div className="max-w-md w-full bg-white rounded-2xl border border-slate-200 shadow-card p-6 sm:p-8 text-center space-y-5">
           <div className={`w-14 h-14 rounded-full mx-auto flex items-center justify-center ${
             errorStatus === 'INACTIVE_QR' ? 'bg-amber-100 text-amber-600' : 'bg-rose-100 text-rose-600'
           }`}>
             <AlertTriangle className="w-8 h-8" />
           </div>
 
-          <h2 className="text-xl font-bold text-slate-900">
-            {errorStatus === 'INACTIVE_QR' ? 'QR Code Inactive' : 'Invalid Vehicle QR Code'}
-          </h2>
+          <div className="space-y-1">
+            <h1 className="text-xl font-black text-slate-900">
+              {errorStatus === 'INACTIVE_QR' ? 'QR Code Inactive' : 'INVALID Vehicle QR Code'}
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+              {errorMessage || 'This vehicle QR code is not recognized or has been invalidated.'}
+            </p>
+          </div>
 
-          <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-            {errorMessage}
-          </p>
-
+          {/* Emergency fallback */}
           <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-left text-xs text-slate-600 space-y-2">
             <p className="font-semibold text-slate-800 flex items-center gap-1.5">
               <ShieldAlert className="w-4 h-4 text-brand-600" />
-              Need Immediate Roadside Help?
+              Need Immediate Emergency Help?
             </p>
             <p>
-              For accidents, medical emergencies, or safety hazards in India, call National Emergency 112 directly:
+              For accidents, road hazards, or medical emergencies in India, dial the National Emergency Helpline directly:
             </p>
             <a
               href="tel:112"
-              className="inline-flex items-center justify-center gap-2 w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-sm transition-colors"
+              className="inline-flex items-center justify-center gap-2 w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-sm transition-colors shadow-subtle"
             >
               <PhoneCall className="w-4 h-4" />
-              <span>Call 112 Emergency</span>
+              <span>Call 112 National Emergency</span>
             </a>
           </div>
 
-          <div className="pt-2">
+          <div className="pt-1">
             <Link to="/" className="text-xs text-brand-600 hover:underline font-semibold">
-              Return to TRUSTFORGE Home
+              Return to TrustFordge Home
             </Link>
           </div>
         </div>
@@ -295,292 +240,546 @@ export const PublicQRScanPage: React.FC = () => {
     );
   }
 
+  // Registered Trusted Contacts list
+  const trustedContactsList = vehicle.trusted_contacts || [];
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col justify-between">
+    <div className="min-h-screen bg-slate-100 flex flex-col justify-between">
       {/* Top Mobile Bar */}
-      <div className="bg-slate-900 text-white px-4 py-3 border-b border-slate-800 sticky top-0 z-30 shadow-subtle">
+      <header className="bg-slate-900 text-white px-4 py-3 border-b border-slate-800 sticky top-0 z-30 shadow-subtle">
         <div className="max-w-md mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Shield className="w-5 h-5 text-brand-400" />
-            <span className="font-extrabold text-sm tracking-tight">
-              TRUST<span className="text-brand-400">FORGE</span>
+            <div className="w-7 h-7 rounded-lg bg-brand-600 text-white flex items-center justify-center font-black text-xs">
+              <Shield className="w-4 h-4" />
+            </div>
+            <span className="font-black text-base tracking-tight text-white">
+              Trust<span className="text-brand-400">Fordge</span>
             </span>
           </div>
-          <span className="text-[11px] font-medium text-slate-300 bg-slate-800 px-2.5 py-0.5 rounded-full border border-slate-700 flex items-center gap-1">
+          <span className="text-[10px] font-semibold text-slate-300 bg-slate-800 px-2.5 py-1 rounded-full border border-slate-700 flex items-center gap-1">
             <Lock className="w-3 h-3 text-emerald-400" />
-            Privacy-Protected Scanner
+            Zero-Leakage Pass
           </span>
         </div>
-      </div>
+      </header>
 
-      {/* Main Scanner Container */}
-      <main className="max-w-md w-full mx-auto p-4 sm:p-6 space-y-5 flex-1">
-        {/* Action Success Alert */}
-        {actionSuccess && (
-          <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-3 shadow-subtle">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-            <div className="text-xs text-emerald-900 leading-relaxed flex-1">
-              <strong className="block font-semibold mb-0.5">Status: Recorded</strong>
-              {actionSuccess}
+      {/* Main Container */}
+      <main className="max-w-md w-full mx-auto p-4 sm:p-5 space-y-5 flex-1">
+        {/* Global Notifications */}
+        {notifiedMessage && (
+          <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl text-xs text-purple-900 flex items-start justify-between gap-2 shadow-subtle">
+            <div className="flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
+              <span>{notifiedMessage}</span>
             </div>
-            <button
-              onClick={() => setActionSuccess(null)}
-              className="text-emerald-700 hover:text-emerald-900 p-1"
-            >
-              <X className="w-4 h-4" />
+            <button onClick={() => setNotifiedMessage(null)} className="text-purple-700 p-0.5 hover:text-purple-900">
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
 
-        {/* Vehicle Identity Card */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-card p-5 space-y-4">
-          <div className="flex items-start justify-between gap-3">
+        {/* ======================================================================= */}
+        {/* SECTION A — VEHICLE INFORMATION */}
+        {/* ======================================================================= */}
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-card overflow-hidden">
+          {/* Header Banner */}
+          <div className="bg-slate-900 text-white px-5 py-4 flex items-center justify-between border-b border-slate-800">
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-brand-700 bg-brand-50 px-2 py-0.5 rounded">
-                Verified Vehicle
+              <span className="text-[10px] font-bold uppercase tracking-wider text-brand-400 block">
+                Verified Vehicle Profile
               </span>
-              <h1 className="text-xl font-black text-slate-900 mt-1">
+              <h1 className="text-lg font-black tracking-tight text-white">
                 {vehicle.brand} {vehicle.model}
               </h1>
-              <p className="text-xs text-slate-500 capitalize">
-                {vehicle.category} • {vehicle.color}
-              </p>
             </div>
 
-            {/* Registration Plate Display */}
-            <div className="bg-slate-900 text-white font-mono px-3 py-1.5 rounded-lg border border-slate-700 text-right shrink-0">
-              <span className="text-[9px] uppercase tracking-wider text-slate-400 block -mb-0.5">
-                IND
-              </span>
-              <span className="text-sm font-bold tracking-wider">
-                {vehicle.registration_display}
+            {/* Indian High-Security Plate Style */}
+            <div className="bg-white text-slate-900 font-mono px-3 py-1.5 rounded-md border-2 border-slate-300 shadow-sm flex items-center gap-2">
+              <div className="flex flex-col items-center justify-center leading-none text-[8px] font-bold text-blue-700 border-r border-slate-300 pr-1.5">
+                <span>IN</span>
+                <span className="text-[6px]">🇮🇳</span>
+              </div>
+              <span className="text-xs sm:text-sm font-black tracking-wider uppercase">
+                {formatVehicleNumber(vehicle.registration_display)}
               </span>
             </div>
           </div>
 
-          {/* Real Vehicle Photograph or Neutral Placeholder */}
-          {vehicle.photo_url ? (
-            <div 
-              onClick={() => setLightboxOpen(true)}
-              className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 cursor-pointer group h-52 flex items-center justify-center"
-            >
-              <img
-                src={vehicle.photo_url}
-                alt={`${vehicle.brand} ${vehicle.model}`}
-                className="w-full h-full object-contain bg-slate-900/5 group-hover:scale-[1.02] transition-transform"
-              />
-              <div className="absolute bottom-2 right-2 bg-slate-900/70 text-white text-[11px] font-medium px-2 py-1 rounded-lg flex items-center gap-1 backdrop-blur-sm">
-                <ZoomIn className="w-3.5 h-3.5" />
-                <span>Tap to expand</span>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/80 p-5 text-center space-y-1 text-slate-400">
-              <Car className="w-8 h-8 mx-auto text-slate-300" />
-              <p className="text-xs font-medium text-slate-500">Neutral Vehicle Profile</p>
-              <p className="text-[10px] text-slate-400">No custom photograph uploaded by owner</p>
-            </div>
-          )}
-
-          {/* Privacy Note: Display Alias & Masked Contacts */}
-          <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
-            {vehicle.owner_display_name ? (
-              <div className="flex items-center gap-1.5">
-                <Shield className="w-4 h-4 text-emerald-600" />
-                <span>Owner: <strong>{vehicle.owner_display_name}</strong></span>
+          <div className="p-5 space-y-4">
+            {/* Real Vehicle Photograph or Clean Neutral Placeholder */}
+            {vehicle.photo_url ? (
+              <div 
+                onClick={() => setLightboxOpen(true)}
+                className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-900/5 cursor-pointer group h-52 flex items-center justify-center"
+              >
+                <img
+                  src={vehicle.photo_url}
+                  alt={`${vehicle.brand} ${vehicle.model}`}
+                  className="w-full h-full object-contain group-hover:scale-[1.02] transition-transform"
+                />
+                <div className="absolute bottom-2 right-2 bg-slate-900/75 text-white text-[10px] font-medium px-2 py-1 rounded-md flex items-center gap-1 backdrop-blur-sm">
+                  <ZoomIn className="w-3 h-3" />
+                  <span>Tap to enlarge</span>
+                </div>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5">
-                <Shield className="w-4 h-4 text-emerald-600" />
-                <span>Registered Owner</span>
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center space-y-1.5 text-slate-400">
+                <Car className="w-10 h-10 mx-auto text-slate-300" />
+                <p className="text-xs font-semibold text-slate-600">Standard Vehicle Profile</p>
+                <p className="text-[10px] text-slate-400">No custom photograph uploaded by owner</p>
               </div>
             )}
 
-            <div className="text-[11px] text-slate-500">
-              {vehicle.trusted_contacts_count} Emergency Contact(s)
-            </div>
-          </div>
-        </div>
-
-        {/* Action Buttons Section */}
-        <div className="space-y-3">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 px-1">
-            Assistance Options
-          </h2>
-
-          {/* Action 1: Contact Vehicle Owner */}
-          {vehicle.allow_contact_requests && (
-            <div className="bg-white rounded-xl border border-slate-200 shadow-subtle p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center shrink-0">
-                    <MessageSquare className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <span className="text-sm font-bold text-slate-900 block">
-                      Contact Vehicle Owner
-                    </span>
-                    <span className="text-[11px] text-slate-500">
-                      Send a message or callback request to the owner
-                    </span>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => setActiveModal('contact')}
-                  className="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-semibold shrink-0 transition-colors"
-                >
-                  Send Message
-                </button>
+            {/* Vehicle Specifications Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1 text-xs">
+              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Owner</span>
+                <span className="font-bold text-slate-800 flex items-center gap-1 mt-0.5">
+                  <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="truncate">{vehicle.owner_display_name || 'Verified Owner'}</span>
+                </span>
               </div>
 
-              {/* Direct Calling Button (ONLY if owner explicitly enabled public phone display) */}
+              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Make & Model</span>
+                <span className="font-bold text-slate-800 truncate block mt-0.5">
+                  {vehicle.brand} {vehicle.model}
+                </span>
+              </div>
+
+              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Model Year</span>
+                <span className="font-bold text-slate-800 flex items-center gap-1 mt-0.5">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                  <span>{vehicle.model_year || 'Current'}</span>
+                </span>
+              </div>
+
+              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Colour</span>
+                <span className="font-bold text-slate-800 flex items-center gap-1 mt-0.5 capitalize">
+                  <Palette className="w-3.5 h-3.5 text-slate-400" />
+                  <span>{vehicle.color || 'Unspecified'}</span>
+                </span>
+              </div>
+
+              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Category</span>
+                <span className="font-bold text-slate-800 capitalize mt-0.5 block">
+                  {vehicle.category}
+                </span>
+              </div>
+
+              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Registration</span>
+                <span className="font-mono font-bold text-slate-900 mt-0.5 block">
+                  {vehicle.registration_display}
+                </span>
+              </div>
+            </div>
+
+            {/* Owner Contact Number (Privacy Gated) */}
+            <div className="pt-2 border-t border-slate-100">
               {vehicle.allow_public_phone_display && vehicle.owner_public_phone ? (
-                <div className="pt-2 border-t border-slate-100">
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-emerald-800 block">
+                      Owner Contact Number (Publicly Shared)
+                    </span>
+                    <span className="text-sm font-bold font-mono text-emerald-950">
+                      {vehicle.owner_public_phone}
+                    </span>
+                  </div>
                   <a
                     href={`tel:${vehicle.owner_public_phone}`}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition-colors shadow-subtle"
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shadow-subtle shrink-0"
                   >
-                    <Phone className="w-4 h-4" />
-                    <span>Call Owner: {vehicle.owner_public_phone}</span>
+                    <Phone className="w-3.5 h-3.5" />
+                    <span>Call Owner</span>
                   </a>
                 </div>
               ) : (
-                <div className="text-[11px] text-slate-400 bg-slate-50 p-2 rounded-lg flex items-center gap-1.5">
-                  <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  <span>Owner phone number is kept private. Messages are delivered via mediated notification.</span>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span>Owner contact number is kept private under TrustFordge privacy shield.</span>
                 </div>
               )}
             </div>
-          )}
 
-          {/* Action 2: Report Parking Issue */}
-          {vehicle.allow_parking_reports && (
-            <button
-              onClick={() => setActiveModal('parking')}
-              className="w-full flex items-center justify-between p-4 bg-white hover:bg-slate-50 rounded-xl border border-slate-200 shadow-subtle text-left group transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
-                  <AlertTriangle className="w-5 h-5" />
-                </div>
+            {/* Owner Address (Strictly Private by Default — Opt-in Only) */}
+            {vehicle.allow_public_address_display && vehicle.owner_public_address ? (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 flex items-start gap-2">
+                <MapPin className="w-4 h-4 text-brand-600 shrink-0 mt-0.5" />
                 <div>
-                  <span className="text-sm font-bold text-slate-900 block">
-                    Report Parking Obstruction
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                    Owner Address (Publicly Shared by Owner)
                   </span>
-                  <span className="text-[11px] text-slate-500">
-                    Vehicle blocking gate, another car, or driveway
+                  <span className="text-xs text-slate-800 font-medium">
+                    {vehicle.owner_public_address}
                   </span>
                 </div>
               </div>
-              <span className="text-xs font-semibold text-amber-600 group-hover:translate-x-0.5 transition-transform">
-                Report →
-              </span>
-            </button>
-          )}
-
-          {/* Action 3: Notify Trusted Contacts */}
-          {vehicle.trusted_contacts_count > 0 && (
-            <button
-              onClick={handleNotifyTrustedContacts}
-              disabled={submittingAction}
-              className="w-full flex items-center justify-between p-4 bg-white hover:bg-slate-50 rounded-xl border border-slate-200 shadow-subtle text-left group transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
-                  <Users className="w-5 h-5" />
-                </div>
-                <div>
-                  <span className="text-sm font-bold text-slate-900 block">
-                    Record Incident for Contacts
-                  </span>
-                  <span className="text-[11px] text-slate-500">
-                    Log emergency status for {vehicle.trusted_contacts_count} configured contact(s) in dashboard
-                  </span>
-                </div>
+            ) : (
+              <div className="text-[11px] text-slate-400 flex items-center gap-1.5 px-1">
+                <Lock className="w-3 h-3 text-slate-400 shrink-0" />
+                <span>Owner residential address is kept strictly private by default.</span>
               </div>
-              <span className="text-xs font-semibold text-purple-600 group-hover:translate-x-0.5 transition-transform">
-                Log Alert →
-              </span>
-            </button>
-          )}
+            )}
+          </div>
+        </section>
 
-          {/* Action 4: Emergency Assistance Alert */}
-          {vehicle.allow_emergency_alerts && (
-            <button
-              onClick={() => setActiveModal('emergency')}
-              className="w-full flex items-center justify-between p-4 bg-rose-50 hover:bg-rose-100/70 rounded-xl border border-rose-200 shadow-subtle text-left group transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0">
-                  <AlertOctagon className="w-5 h-5" />
-                </div>
-                <div>
-                  <span className="text-sm font-bold text-rose-950 block">
-                    Emergency Assistance Alert
-                  </span>
-                  <span className="text-[11px] text-rose-700">
-                    Accident, hazard, or urgent vehicle crisis
-                  </span>
-                </div>
-              </div>
-              <span className="text-xs font-semibold text-rose-700 group-hover:translate-x-0.5 transition-transform">
-                Alert →
-              </span>
-            </button>
-          )}
-
-          {/* Action 5: Call National Emergency 112 (Direct, unhindered phone dialer) */}
-          <a
-            href="tel:112"
-            className="w-full flex items-center justify-between p-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-card text-left transition-all"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-white text-emerald-700 flex items-center justify-center shrink-0 font-black">
-                <PhoneCall className="w-5 h-5 text-emerald-600" />
+        {/* ======================================================================= */}
+        {/* SECTION B — FEATURE TWO: CONTACT TRUSTED FAMILY MEMBERS */}
+        {/* ======================================================================= */}
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-card p-5 space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center">
+                <Users className="w-4 h-4" />
               </div>
               <div>
-                <span className="text-sm font-black tracking-tight block text-white">
-                  Call National Emergency 112
-                </span>
-                <span className="text-[11px] text-emerald-100">
-                  Direct dial to Police, Ambulance & Fire Dispatch (India)
-                </span>
+                <h2 className="text-sm font-black text-slate-900 tracking-tight">
+                  Contact Trusted Family Members
+                </h2>
+                <p className="text-[11px] text-slate-500">
+                  Verified emergency contacts configured by the vehicle owner
+                </p>
               </div>
             </div>
-            <span className="text-xs font-extrabold text-white px-2.5 py-1 rounded-md bg-emerald-800/80">
-              112
+            <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">
+              {trustedContactsList.length}
             </span>
-          </a>
-        </div>
-
-        {/* Privacy Note */}
-        <div className="bg-slate-100 rounded-xl p-3 text-[11px] text-slate-500 space-y-1">
-          <div className="flex items-center gap-1.5 font-semibold text-slate-700">
-            <Lock className="w-3.5 h-3.5 text-brand-600" />
-            <span>Zero-Exposure Privacy Guarantee</span>
           </div>
-          <p>
-            TRUSTFORGE protects both scanner and vehicle owner. Personal mobile numbers, emails, and home addresses are never exposed during this interaction.
+
+          {trustedContactsList.length === 0 ? (
+            <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-500 space-y-1">
+              <Users className="w-6 h-6 mx-auto text-slate-300" />
+              <p className="font-semibold text-slate-700">No Trusted Contacts Registered</p>
+              <p className="text-[11px] text-slate-400">The owner has not attached family emergency contacts yet.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {trustedContactsList.map((contact, idx) => {
+                const hasPhone = Boolean(contact.phone);
+                const cleanPhone = contact.phone ? contact.phone.replace(/[\s\-\(\)]/g, '').replace(/^\+91|^91|^0/, '') : '';
+
+                return (
+                  <div
+                    key={contact.id || idx}
+                    className="p-3.5 bg-slate-50 hover:bg-slate-100/80 rounded-xl border border-slate-200 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  >
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-900">
+                          {contact.full_name}
+                        </span>
+                        <span className="text-[10px] font-semibold text-brand-700 bg-brand-50 px-2 py-0.5 rounded-full border border-brand-100">
+                          {contact.relationship}
+                        </span>
+                        {contact.is_primary && (
+                          <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded">
+                            Primary
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {hasPhone ? (
+                          <span className="font-mono text-slate-700 font-semibold">{contact.phone}</span>
+                        ) : (
+                          <span className="text-slate-400 flex items-center gap-1">
+                            <Lock className="w-2.5 h-2.5" /> Direct number hidden by privacy shield
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Action button: Green WhatsApp/Phone call button if phone is public, or mediated alert dispatch */}
+                    {hasPhone ? (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <a
+                          href={`https://wa.me/91${cleanPhone}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shadow-subtle"
+                          title="WhatsApp Message"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>WhatsApp</span>
+                        </a>
+
+                        <a
+                          href={`tel:${contact.phone}`}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-colors shadow-subtle"
+                          title="Call Phone"
+                        >
+                          <Phone className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Call</span>
+                        </a>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleNotifyContact(contact)}
+                        disabled={notifyingContactId === contact.id}
+                        className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition-colors shadow-subtle shrink-0"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>{notifyingContactId === contact.id ? 'Logging...' : 'Notify Contact'}</span>
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* ======================================================================= */}
+        {/* SECTION C — FEATURE THREE: REPORT A VEHICLE ISSUE */}
+        {/* ======================================================================= */}
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-card p-5 space-y-4">
+          <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
+            <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-sm font-black text-slate-900 tracking-tight">
+                Report a Vehicle Issue
+              </h2>
+              <p className="text-[11px] text-slate-500">
+                Describe parking obstructions, blockages, or minor vehicle issues to the owner
+              </p>
+            </div>
+          </div>
+
+          {/* Form success banner */}
+          {issueSuccess && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-start justify-between gap-2 shadow-subtle">
+              <div className="flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <span>{issueSuccess}</span>
+              </div>
+              <button onClick={() => setIssueSuccess(null)} className="text-emerald-700 p-0.5 hover:text-emerald-900">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmitIssue} className="space-y-3.5">
+            {/* Issue Category Radio Chips */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1.5">
+                Issue Category *
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { key: 'parking', label: 'Parking Issue' },
+                  { key: 'blocking', label: 'Vehicle Blocking Access' },
+                  { key: 'damage', label: 'Vehicle Damage' },
+                  { key: 'other', label: 'Other Issue' },
+                ].map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => setIssueType(item.key as any)}
+                    className={`py-2 px-3 rounded-xl text-xs font-semibold text-left transition-all border ${
+                      issueType === item.key
+                        ? 'bg-amber-50 border-amber-400 text-amber-900 shadow-sm'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Description / Message */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+                Description / Message *
+              </label>
+              <textarea
+                rows={3}
+                required
+                placeholder="e.g. Your vehicle is blocking the society driveway / gate entrance. Please adjust when possible."
+                value={issueDescription}
+                onChange={(e) => setIssueDescription(e.target.value)}
+                className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+              />
+            </div>
+
+            {/* Optional Callback Phone */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
+                Your Contact Number <span className="text-slate-400 font-normal">(Optional Callback)</span>
+              </label>
+              <input
+                type="tel"
+                placeholder="Leave phone number if you wish the owner to call you"
+                value={reporterPhone}
+                onChange={(e) => setReporterPhone(e.target.value)}
+                className="w-full text-xs px-3 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 font-mono"
+              />
+            </div>
+
+            {/* GPS Location Attachment */}
+            <div className="flex items-center justify-between pt-1">
+              {locationConsentGranted ? (
+                <div className="text-[11px] text-emerald-700 flex items-center gap-1.5 font-medium bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-200">
+                  <Navigation className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>GPS location attached ({scannerLocation?.latitude}, {scannerLocation?.longitude})</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleRequestLocation}
+                  disabled={requestingLocation}
+                  className="inline-flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-700 font-semibold"
+                >
+                  <MapPin className="w-3.5 h-3.5" />
+                  <span>{requestingLocation ? 'Fetching GPS...' : 'Attach current location'}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Submit Button */}
+            <button
+              type="submit"
+              disabled={submittingIssue}
+              className="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 shadow-subtle"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>{submittingIssue ? 'Submitting Report...' : 'Submit Issue Report'}</span>
+            </button>
+          </form>
+        </section>
+
+        {/* ======================================================================= */}
+        {/* SECTION D — FEATURE FOUR: EMERGENCY ASSISTANCE */}
+        {/* ======================================================================= */}
+        <section className="bg-white rounded-2xl border border-rose-200 shadow-card p-5 space-y-4">
+          <div className="flex items-center gap-2.5 pb-3 border-b border-rose-100">
+            <div className="w-8 h-8 rounded-lg bg-rose-600 text-white flex items-center justify-center">
+              <AlertOctagon className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-sm font-black text-rose-950 tracking-tight">
+                Emergency Assistance
+              </h2>
+              <p className="text-[11px] text-rose-700">
+                Critical life-safety & national emergency hotlines (India)
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            {/* 1. Emergency Helpline — 112 */}
+            <a
+              href="tel:112"
+              className="p-3 bg-rose-50 hover:bg-rose-100/80 border border-rose-200 rounded-xl transition-all group flex flex-col justify-between"
+            >
+              <div className="flex items-center justify-between">
+                <span className="w-7 h-7 rounded-lg bg-rose-600 text-white flex items-center justify-center">
+                  <PhoneCall className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-xs font-black text-rose-800 font-mono">112</span>
+              </div>
+              <div className="mt-2">
+                <span className="text-xs font-bold text-slate-900 block group-hover:text-rose-900">
+                  Emergency Helpline
+                </span>
+                <span className="text-[10px] text-slate-500">Universal Help (India)</span>
+              </div>
+            </a>
+
+            {/* 2. Ambulance — 108 */}
+            <a
+              href="tel:108"
+              className="p-3 bg-rose-50 hover:bg-rose-100/80 border border-rose-200 rounded-xl transition-all group flex flex-col justify-between"
+            >
+              <div className="flex items-center justify-between">
+                <span className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center">
+                  <Ambulance className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-xs font-black text-emerald-800 font-mono">108</span>
+              </div>
+              <div className="mt-2">
+                <span className="text-xs font-bold text-slate-900 block group-hover:text-emerald-900">
+                  Ambulance
+                </span>
+                <span className="text-[10px] text-slate-500">Medical Emergency</span>
+              </div>
+            </a>
+
+            {/* 3. Fire Brigade — 101 */}
+            <a
+              href="tel:101"
+              className="p-3 bg-rose-50 hover:bg-rose-100/80 border border-rose-200 rounded-xl transition-all group flex flex-col justify-between"
+            >
+              <div className="flex items-center justify-between">
+                <span className="w-7 h-7 rounded-lg bg-orange-600 text-white flex items-center justify-center">
+                  <Flame className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-xs font-black text-orange-800 font-mono">101</span>
+              </div>
+              <div className="mt-2">
+                <span className="text-xs font-bold text-slate-900 block group-hover:text-orange-900">
+                  Fire Brigade
+                </span>
+                <span className="text-[10px] text-slate-500">Fire & Rescue</span>
+              </div>
+            </a>
+
+            {/* 4. Police / Emergency — 112 */}
+            <a
+              href="tel:112"
+              className="p-3 bg-rose-50 hover:bg-rose-100/80 border border-rose-200 rounded-xl transition-all group flex flex-col justify-between"
+            >
+              <div className="flex items-center justify-between">
+                <span className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center">
+                  <BadgeAlert className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-xs font-black text-blue-800 font-mono">112</span>
+              </div>
+              <div className="mt-2">
+                <span className="text-xs font-bold text-slate-900 block group-hover:text-blue-900">
+                  Police / Emergency
+                </span>
+                <span className="text-[10px] text-slate-500">Law Enforcement</span>
+              </div>
+            </a>
+          </div>
+
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-[10px] text-slate-500">
+            For critical road collisions, serious injuries, or criminal activity, dial 112 directly. TrustFordge facilitates mediated owner notification and does not replace emergency dispatch services.
+          </div>
+        </section>
+
+        {/* Zero-Leakage Privacy Banner */}
+        <div className="bg-slate-900 text-white rounded-xl p-4 text-xs space-y-1 shadow-subtle">
+          <div className="flex items-center gap-1.5 font-bold text-brand-400">
+            <Lock className="w-3.5 h-3.5" />
+            <span>TrustFordge Zero-Leakage Guarantee</span>
+          </div>
+          <p className="text-[11px] text-slate-300 leading-relaxed">
+            Your personal identity is safe. Neither the scanner nor the vehicle owner’s private mobile numbers or home addresses are harvested or exposed during this interaction.
           </p>
         </div>
       </main>
 
       {/* Footer */}
-      <footer className="py-4 text-center text-xs text-slate-400 border-t border-slate-200">
-        TRUSTFORGE Vehicle Assistance Network • Privacy-First Architecture
+      <footer className="py-4 text-center text-xs text-slate-500 border-t border-slate-200 bg-white">
+        TrustFordge Vehicle Assistance Network • Privacy-First Architecture
       </footer>
 
-      {/* ======================================================================= */}
-      {/* VEHICLE PHOTOGRAPH LIGHTBOX PREVIEW */}
-      {/* ======================================================================= */}
+      {/* Photo Lightbox Preview */}
       {lightboxOpen && vehicle.photo_url && (
         <div 
           onClick={() => setLightboxOpen(false)}
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm"
         >
           <div 
-            onClick={e => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
             className="relative max-w-2xl w-full bg-white rounded-2xl overflow-hidden shadow-2xl p-2"
           >
             <div className="flex items-center justify-between p-2 border-b border-slate-100">
@@ -601,249 +800,6 @@ export const PublicQRScanPage: React.FC = () => {
                 alt={`${vehicle.brand} ${vehicle.model}`}
                 className="max-h-[70vh] w-auto object-contain rounded-lg"
               />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ======================================================================= */}
-      {/* MODAL 1: CONTACT VEHICLE OWNER */}
-      {/* ======================================================================= */}
-      {activeModal === 'contact' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-elevated">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-brand-600" />
-                Contact Vehicle Owner
-              </h3>
-              <button onClick={() => setActiveModal(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
-                  Reason / Category
-                </label>
-                <select
-                  value={contactCategory}
-                  onChange={e => setContactCategory(e.target.value as ContactRequestCategory)}
-                  className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
-                >
-                  <option value="general">General Inquiry</option>
-                  <option value="parking">Parking Inconvenience</option>
-                  <option value="lights_on">Vehicle Headlights Left On</option>
-                  <option value="window_open">Car Window / Sunroof Open</option>
-                  <option value="other">Other Reason</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
-                  Message for Owner
-                </label>
-                <textarea
-                  rows={3}
-                  placeholder="e.g. Hi, your headlights appear to have been left on."
-                  value={contactMessage}
-                  onChange={e => setContactMessage(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
-                  Your Phone Number <span className="text-slate-400 font-normal">(Optional Callback)</span>
-                </label>
-                <input
-                  type="tel"
-                  placeholder="Leave number if you want owner to call you"
-                  value={callerPhone}
-                  onChange={e => setCallerPhone(e.target.value)}
-                  className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                onClick={() => setActiveModal(null)}
-                className="px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSubmitContact}
-                disabled={submittingAction}
-                className="px-4 py-2 text-xs font-semibold bg-brand-600 hover:bg-brand-700 text-white rounded-lg transition-colors flex items-center gap-1.5"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>{submittingAction ? 'Sending...' : 'Send Message'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ======================================================================= */}
-      {/* MODAL 2: REPORT PARKING ISSUE */}
-      {/* ======================================================================= */}
-      {activeModal === 'parking' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-elevated">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-500" />
-                Report Parking Obstruction
-              </h3>
-              <button onClick={() => setActiveModal(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
-                  Obstruction Reason *
-                </label>
-                <select
-                  value={parkingReason}
-                  onChange={e => setParkingReason(e.target.value as ParkingReason)}
-                  className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
-                >
-                  <option value="blocking_entrance">Vehicle blocking gate / driveway</option>
-                  <option value="blocking_vehicle">Vehicle blocking another vehicle</option>
-                  <option value="wrong_parking">Parked in reserved / unauthorized slot</option>
-                  <option value="other">Other parking issue</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
-                  Short Description <span className="text-slate-400 font-normal">(Optional)</span>
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="e.g. Parked near Gate #2, delivery van cannot enter."
-                  value={parkingDescription}
-                  onChange={e => setParkingDescription(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                />
-              </div>
-
-              {/* Optional GPS Location Attachment */}
-              <div className="pt-1">
-                {locationConsentGranted ? (
-                  <div className="text-[11px] text-emerald-600 flex items-center gap-1 font-medium bg-emerald-50 p-2 rounded-lg">
-                    <Navigation className="w-3.5 h-3.5" />
-                    <span>Location coordinates attached</span>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleRequestLocation}
-                    disabled={requestingLocation}
-                    className="inline-flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-700"
-                  >
-                    <MapPin className="w-3.5 h-3.5" />
-                    <span>{requestingLocation ? 'Locating...' : 'Attach incident location (GPS)'}</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                onClick={() => setActiveModal(null)}
-                className="px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSubmitParking}
-                disabled={submittingAction}
-                className="px-4 py-2 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition-colors flex items-center gap-1.5"
-              >
-                <AlertTriangle className="w-3.5 h-3.5" />
-                <span>{submittingAction ? 'Submitting...' : 'Submit Report'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ======================================================================= */}
-      {/* MODAL 3: EMERGENCY ASSISTANCE */}
-      {/* ======================================================================= */}
-      {activeModal === 'emergency' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-elevated">
-            <div className="flex items-center justify-between pb-3 border-b border-rose-100">
-              <h3 className="font-bold text-rose-900 text-sm flex items-center gap-2">
-                <AlertOctagon className="w-4 h-4 text-rose-600" />
-                Emergency Assistance Alert
-              </h3>
-              <button onClick={() => setActiveModal(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-[11px] text-rose-800 leading-relaxed">
-              <strong>Notice:</strong> This logs an urgent incident in the vehicle owner's emergency dashboard. It does <strong>not</strong> automatically dispatch police, fire, or ambulance. For life-threatening emergencies, use the direct 112 call button.
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase mb-1">
-                  Describe Incident
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="e.g. Vehicle involved in a scrape / broken window / urgent owner needed."
-                  value={emergencyMessage}
-                  onChange={e => setEmergencyMessage(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-rose-500"
-                />
-              </div>
-
-              {/* Optional Geolocation */}
-              <div className="pt-1">
-                {locationConsentGranted ? (
-                  <div className="text-[11px] text-emerald-600 flex items-center gap-1 font-medium bg-emerald-50 p-2 rounded-lg">
-                    <Navigation className="w-3.5 h-3.5" />
-                    <span>Location coordinates attached</span>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleRequestLocation}
-                    disabled={requestingLocation}
-                    className="inline-flex items-center gap-1.5 text-xs text-rose-600 hover:text-rose-700"
-                  >
-                    <MapPin className="w-3.5 h-3.5" />
-                    <span>{requestingLocation ? 'Locating...' : 'Attach incident location'}</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                onClick={() => setActiveModal(null)}
-                className="px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSubmitEmergency}
-                disabled={submittingAction}
-                className="px-4 py-2 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-colors flex items-center gap-1.5"
-              >
-                <AlertOctagon className="w-3.5 h-3.5" />
-                <span>{submittingAction ? 'Sending...' : 'Dispatch Alert'}</span>
-              </button>
             </div>
           </div>
         </div>

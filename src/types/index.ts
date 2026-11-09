@@ -31,6 +31,9 @@ export interface Vehicle {
   mask_registration_number: boolean;
   allow_public_phone_display: boolean;
   show_owner_name: boolean;
+  allow_public_address_display?: boolean;
+  allow_trusted_contacts_display?: boolean;
+  allow_trusted_contacts_phone_display?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -136,22 +139,36 @@ export interface NotificationLog {
   created_at: string;
 }
 
+export interface PublicTrustedContact {
+  id: string;
+  full_name: string;
+  relationship: string;
+  phone?: string | null;
+  is_primary?: boolean;
+}
+
 // Public vehicle details returned by secure token lookup
 export interface PublicVehicleData {
   id: string;
   category: VehicleCategory;
   brand: string;
   model: string;
+  model_year?: number;
   color: string;
   registration_display: string;
   photo_url?: string;
   owner_display_name?: string;
   trusted_contacts_count: number;
+  trusted_contacts?: PublicTrustedContact[];
   allow_contact_requests: boolean;
   allow_parking_reports: boolean;
   allow_emergency_alerts: boolean;
   allow_public_phone_display: boolean;
   owner_public_phone?: string; // ONLY populated if owner explicitly enabled allow_public_phone_display
+  allow_public_address_display?: boolean;
+  owner_public_address?: string; // ONLY populated if owner explicitly enabled allow_public_address_display
+  allow_trusted_contacts_display?: boolean;
+  allow_trusted_contacts_phone_display?: boolean;
 }
 
 // Registration Onboarding Form State
@@ -185,5 +202,7 @@ export interface OnboardingData {
   maskRegistrationNumber: boolean;
   allowPublicPhoneDisplay: boolean;
   showOwnerName: boolean;
+  allowPublicAddressDisplay?: boolean;
+  allowTrustedContactsDisplay?: boolean;
   consentAgreed: boolean;
 }
