@@ -203,7 +203,7 @@ export function getAppBaseUrl(): string {
     return window.location.origin.replace(/\/$/, '');
   }
 
-  return 'https://trustforge.vercel.app';
+  return 'https://trustfordge.vercel.app';
 }
 
 /**
