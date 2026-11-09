@@ -1,0 +1,36 @@
+warning: in the working copy of 'package.json', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/package.json b/package.json[m
+[1mindex ef89efb..d9a112d 100644[m
+[1m--- a/package.json[m
+[1m+++ b/package.json[m
+[36m@@ -11,7 +11,7 @@[m
+   },[m
+   "dependencies": {[m
+     "@hookform/resolvers": "^3.9.0",[m
+[31m-    "@supabase/supabase-js": "^2.45.6",[m
+[32m+[m[32m    "@supabase/supabase-js": "^2.119.0",[m
+     "canvas-confetti": "^1.9.4",[m
+     "clsx": "^2.1.1",[m
+     "lucide-react": "^0.453.0",[m
+[36m@@ -19,10 +19,10 @@[m
+     "react": "^18.3.1",[m
+     "react-dom": "^18.3.1",[m
+     "react-hook-form": "^7.53.0",[m
+[31m-    "react-router-dom": "^6.27.0",[m
+[32m+[m[32m    "react-router-dom": "^7.18.5",[m
+     "recharts": "^2.13.0",[m
+     "tailwind-merge": "^2.5.4",[m
+[31m-    "zod": "^3.23.8"[m
+[32m+[m[32m    "zod": "^4.6.7"[m
+   },[m
+   "devDependencies": {[m
+     "@types/canvas-confetti": "^1.9.0",[m
+[36m@@ -35,7 +35,6 @@[m
+     "postcss": "^8.4.47",[m
+     "tailwindcss": "^3.4.13",[m
+     "typescript": "^5.6.3",[m
+[31m-    "vite": "^5.4.9"[m
+[32m+[m[32m    "vite": "^8.3.7"[m
+   }[m
+ }[m
+[31m-[m
