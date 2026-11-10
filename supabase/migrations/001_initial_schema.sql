@@ -1039,9 +1039,9 @@ END;
 $$;
 
 -- ============================================================================
--- Function 6: Secure Owner Vehicles Retrieval (Bypasses anonymous RLS for owner's UUID)
+-- Function 6: Secure Owner Vehicles Retrieval (AUTHENTICATED ONLY, STRICT auth.uid() ENFORCEMENT)
 -- ============================================================================
-CREATE OR REPLACE FUNCTION public.get_owner_vehicles(p_owner_id UUID)
+CREATE OR REPLACE FUNCTION public.get_owner_vehicles(p_owner_id UUID DEFAULT NULL)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1049,11 +1049,24 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_vehicles_json JSONB;
+  v_caller_uid UUID;
+  v_target_owner_id UUID;
 BEGIN
-  IF p_owner_id IS NULL THEN
-    RETURN '[]'::jsonb;
+  -- 1. Ensure the caller is an authenticated user with a valid JWT
+  v_caller_uid := auth.uid();
+  IF v_caller_uid IS NULL THEN
+    RAISE EXCEPTION 'Unauthorized: authenticated session required' USING ERRCODE = '42501';
   END IF;
 
+  -- 2. Resolve target owner ID: default to caller's own auth.uid() if omitted
+  v_target_owner_id := COALESCE(p_owner_id, v_caller_uid);
+
+  -- 3. Strict Authorization: caller can ONLY access their own vehicles
+  IF v_target_owner_id <> v_caller_uid THEN
+    RAISE EXCEPTION 'Forbidden: caller (%) cannot access vehicles of owner (%)', v_caller_uid, v_target_owner_id USING ERRCODE = '42501';
+  END IF;
+
+  -- 4. Retrieve vehicles strictly for the authenticated caller
   SELECT COALESCE(
     jsonb_agg(
       to_jsonb(v) ORDER BY v.created_at DESC
@@ -1061,16 +1074,16 @@ BEGIN
     '[]'::jsonb
   ) INTO v_vehicles_json
   FROM public.vehicles v
-  WHERE v.owner_id = p_owner_id;
+  WHERE v.owner_id = v_caller_uid;
 
   RETURN v_vehicles_json;
 END;
 $$;
 
 -- ============================================================================
--- Function 7: Secure Owner Trusted Contacts Retrieval (Bypasses anonymous RLS for owner's UUID)
+-- Function 7: Secure Owner Trusted Contacts Retrieval (AUTHENTICATED ONLY, STRICT auth.uid() ENFORCEMENT)
 -- ============================================================================
-CREATE OR REPLACE FUNCTION public.get_owner_trusted_contacts(p_owner_id UUID)
+CREATE OR REPLACE FUNCTION public.get_owner_trusted_contacts(p_owner_id UUID DEFAULT NULL)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -1078,11 +1091,24 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_contacts_json JSONB;
+  v_caller_uid UUID;
+  v_target_owner_id UUID;
 BEGIN
-  IF p_owner_id IS NULL THEN
-    RETURN '[]'::jsonb;
+  -- 1. Ensure the caller is an authenticated user with a valid JWT
+  v_caller_uid := auth.uid();
+  IF v_caller_uid IS NULL THEN
+    RAISE EXCEPTION 'Unauthorized: authenticated session required' USING ERRCODE = '42501';
   END IF;
 
+  -- 2. Resolve target owner ID: default to caller's own auth.uid() if omitted
+  v_target_owner_id := COALESCE(p_owner_id, v_caller_uid);
+
+  -- 3. Strict Authorization: caller can ONLY access their own contacts
+  IF v_target_owner_id <> v_caller_uid THEN
+    RAISE EXCEPTION 'Forbidden: caller (%) cannot access contacts of owner (%)', v_caller_uid, v_target_owner_id USING ERRCODE = '42501';
+  END IF;
+
+  -- 4. Retrieve contacts strictly for the authenticated caller
   SELECT COALESCE(
     jsonb_agg(
       to_jsonb(tc) ORDER BY tc.is_primary DESC, tc.created_at ASC
@@ -1090,14 +1116,14 @@ BEGIN
     '[]'::jsonb
   ) INTO v_contacts_json
   FROM public.trusted_contacts tc
-  WHERE tc.owner_id = p_owner_id;
+  WHERE tc.owner_id = v_caller_uid;
 
   RETURN v_contacts_json;
 END;
 $$;
 
 -- ============================================================================
--- EXPLICIT FUNCTION PERMISSIONS (REVOKE FROM PUBLIC, GRANT TO ANON & AUTHENTICATED)
+-- EXPLICIT FUNCTION PERMISSIONS (REVOKE FROM PUBLIC, RESTRICT SENSITIVE RPCS TO AUTHENTICATED)
 -- ============================================================================
 REVOKE ALL ON FUNCTION public.get_public_vehicle_by_token(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.submit_public_contact_request(TEXT, TEXT, TEXT, TEXT, JSONB) FROM PUBLIC;
@@ -1105,15 +1131,20 @@ REVOKE ALL ON FUNCTION public.submit_public_parking_report(TEXT, TEXT, TEXT, JSO
 REVOKE ALL ON FUNCTION public.submit_public_emergency_alert(TEXT, TEXT, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.register_owner_and_vehicle(JSONB, JSONB, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.get_owner_vehicles(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_owner_vehicles(UUID) FROM anon;
 REVOKE ALL ON FUNCTION public.get_owner_trusted_contacts(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_owner_trusted_contacts(UUID) FROM anon;
 
+-- Public Anonymous Scanning & Reporting RPCS (Anonymous phone camera/browser access)
 GRANT EXECUTE ON FUNCTION public.get_public_vehicle_by_token(TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.submit_public_contact_request(TEXT, TEXT, TEXT, TEXT, JSONB) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.submit_public_parking_report(TEXT, TEXT, TEXT, JSONB, TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.submit_public_emergency_alert(TEXT, TEXT, JSONB) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.register_owner_and_vehicle(JSONB, JSONB, JSONB) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.get_owner_vehicles(UUID) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.get_owner_trusted_contacts(UUID) TO anon, authenticated;
+
+-- Private Owner RPCS (AUTHENTICATED ONLY - Anonymous access revoked)
+GRANT EXECUTE ON FUNCTION public.get_owner_vehicles(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_owner_trusted_contacts(UUID) TO authenticated;
 
 -- ============================================================================
 -- REALTIME SUBSCRIPTIONS ENABLING (IDEMPOTENT)

@@ -69,7 +69,21 @@ export const DashboardPage: React.FC = () => {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   const loadData = useCallback(async () => {
-    const currentId = getCurrentOwnerId();
+    let currentId = getCurrentOwnerId();
+
+    // Verify and synchronize active Supabase authenticated session
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data: authData } = await supabase.auth.getUser();
+        if (authData?.user?.id) {
+          currentId = authData.user.id;
+          setCurrentOwnerId(authData.user.id);
+        }
+      } catch (authErr) {
+        console.warn('Supabase auth session check notice:', authErr);
+      }
+    }
+
     if (!currentId) {
       setOwnerId(null);
       return;

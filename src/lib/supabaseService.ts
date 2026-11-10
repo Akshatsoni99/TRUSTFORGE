@@ -84,6 +84,30 @@ export async function signUpOwnerWithSupabase(params: {
       return { user: null, error: 'No user returned from authentication.' };
     }
 
+    // Ensure an active session is established with a valid auth JWT
+    if (!authData.session) {
+      try {
+        const { data: signInData } = await supabase.auth.signInWithPassword({
+          email: authEmail,
+          password: authPassword,
+        });
+        if (signInData?.user) {
+          await supabase.from('profiles').upsert({
+            id: signInData.user.id,
+            full_name: params.fullName.trim(),
+            email: params.email?.trim() || null,
+            phone: params.phone.trim(),
+            phone_verified: false,
+            residential_address: params.address?.trim() || null,
+            updated_at: new Date().toISOString(),
+          });
+          return { user: signInData.user, error: null };
+        }
+      } catch (signInErr) {
+        console.warn('Auto sign-in post-signup notice:', signInErr);
+      }
+    }
+
     // 2. Upsert profile in public.profiles table
     const { error: profileError } = await supabase.from('profiles').upsert({
       id: user.id,
