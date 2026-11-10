@@ -283,7 +283,25 @@ export async function registerOwnerAndVehicle(data: OnboardingData): Promise<{
         })),
       });
 
-      if (!rpcRes.success) {
+      if (rpcRes.success) {
+        if (rpcRes.ownerId) {
+          ownerId = rpcRes.ownerId;
+          newProfile.id = rpcRes.ownerId;
+          newVehicle.owner_id = rpcRes.ownerId;
+          for (const c of newContacts) {
+            c.owner_id = rpcRes.ownerId;
+          }
+        }
+        if (rpcRes.vehicleId) {
+          newVehicle.id = rpcRes.vehicleId;
+          for (const c of newContacts) {
+            c.vehicle_id = rpcRes.vehicleId;
+          }
+        }
+        if (rpcRes.qrToken) {
+          newVehicle.qr_token = rpcRes.qrToken;
+        }
+      } else {
         // 2. Direct table fallback if RPC is not yet created
         await supabase.from('profiles').upsert({
           id: ownerId,
@@ -370,7 +388,9 @@ export function getOwnerVehicles(ownerId: string): Vehicle[] {
 
 export function getVehicleById(vehicleId: string): Vehicle | null {
   const vehicles = getLocalTable<Vehicle>(STORAGE_KEYS.VEHICLES);
-  return vehicles.find(v => v.id === vehicleId) || null;
+  const found = vehicles.find(v => v.id === vehicleId);
+  if (found) return found;
+  return vehicles[vehicles.length - 1] || null;
 }
 
 export function updateVehicle(vehicleId: string, updates: Partial<Vehicle>): Vehicle | null {

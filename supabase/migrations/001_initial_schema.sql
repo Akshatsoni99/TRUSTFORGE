@@ -1023,7 +1023,15 @@ BEGIN
           COALESCE((v_contact->>'notify_on_emergency')::BOOLEAN, true),
           timezone('utc'::text, now()),
           timezone('utc'::text, now())
-        );
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          full_name = EXCLUDED.full_name,
+          relationship = EXCLUDED.relationship,
+          phone = EXCLUDED.phone,
+          email = EXCLUDED.email,
+          is_primary = EXCLUDED.is_primary,
+          notify_on_emergency = EXCLUDED.notify_on_emergency,
+          updated_at = timezone('utc'::text, now());
       END IF;
     END LOOP;
   END IF;

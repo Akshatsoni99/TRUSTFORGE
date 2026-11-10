@@ -70,12 +70,14 @@ export const DashboardPage: React.FC = () => {
 
   const loadData = useCallback(async () => {
     let currentId = getCurrentOwnerId();
+    let hasAuthSession = false;
 
     // Verify and synchronize active Supabase authenticated session
     if (isSupabaseConfigured && supabase) {
       try {
         const { data: authData } = await supabase.auth.getUser();
         if (authData?.user?.id) {
+          hasAuthSession = true;
           currentId = authData.user.id;
           setCurrentOwnerId(authData.user.id);
         }
@@ -91,20 +93,31 @@ export const DashboardPage: React.FC = () => {
 
     setOwnerId(currentId);
 
-    // 1. Try fetching from Supabase if configured
+    // 1. Try fetching from Supabase if configured (call owner RPCs only when authenticated)
+    let dbVehicles: Vehicle[] = [];
+    let dbContacts: TrustedContact[] = [];
+    let dbProfile: Profile | null = null;
+
     if (isSupabaseConfigured && supabase) {
       try {
-        const [dbProfile, dbVehicles, dbContacts] = await Promise.all([
+        const [p, v, c] = await Promise.all([
           fetchOwnerProfileFromDb(currentId),
-          fetchOwnerVehiclesFromDb(currentId),
-          fetchOwnerTrustedContactsFromDb(currentId),
+          hasAuthSession ? fetchOwnerVehiclesFromDb(currentId) : Promise.resolve([]),
+          hasAuthSession ? fetchOwnerTrustedContactsFromDb(currentId) : Promise.resolve([]),
         ]);
+        dbProfile = p;
+        dbVehicles = v || [];
+        dbContacts = c || [];
+      } catch (err) {
+        console.warn('Supabase dashboard load warning, falling back to local store:', err);
+      }
+    }
 
-        const localVehs = getOwnerVehicles(currentId);
-        const combinedVehicles = dbVehicles && dbVehicles.length > 0 ? dbVehicles : localVehs;
+    const localVehs = getOwnerVehicles(currentId);
+    const combinedVehicles = dbVehicles && dbVehicles.length > 0 ? dbVehicles : localVehs;
 
-        const localContacts = getOwnerTrustedContacts(currentId);
-        const combinedContacts = dbContacts && dbContacts.length > 0 ? dbContacts : localContacts;
+    const localContacts = getOwnerTrustedContacts(currentId);
+    const combinedContacts = dbContacts && dbContacts.length > 0 ? dbContacts : localContacts;
 
         if (dbProfile || combinedVehicles.length > 0) {
           setProfile(dbProfile || getCurrentProfile());
@@ -145,10 +158,6 @@ export const DashboardPage: React.FC = () => {
           });
           return;
         }
-      } catch (err) {
-        console.warn('Supabase dashboard load warning, falling back to local store:', err);
-      }
-    }
 
     // 2. Local storage fallback
     setProfile(getCurrentProfile());
