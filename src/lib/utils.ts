@@ -17,7 +17,8 @@ export function validateIndianMobile(phone: string): boolean {
 /**
  * Normalizes Indian mobile number to standard +91XXXXXXXXXX format
  */
-export function normalizeIndianMobile(phone: string): string {
+export function normalizeIndianMobile(phone?: string | null): string {
+  if (!phone) return '';
   const cleaned = phone.replace(/[\s\-\(\)]/g, '');
   if (cleaned.startsWith('+91')) return cleaned;
   if (cleaned.startsWith('91') && cleaned.length === 12) return `+${cleaned}`;
@@ -180,36 +181,33 @@ export function checkRateLimit(actionKey: string, cooldownSeconds: number = 30):
 }
 
 /**
- * Resolves the absolute application base URL for generating production QR codes
+ * Resolves the absolute application base URL for generating production QR codes.
+ * Always guarantees the canonical production domain (https://trustfordge.vercel.app)
+ * and strictly prevents localhost or development URLs from being encoded in QR passes.
  */
 export function getAppBaseUrl(): string {
   const envUrl = import.meta.env.VITE_APP_URL;
-  if (envUrl && typeof envUrl === 'string' && envUrl.startsWith('https://')) {
+  if (envUrl && typeof envUrl === 'string' && envUrl.startsWith('https://') && !envUrl.includes('localhost')) {
     return envUrl.replace(/\/$/, '');
   }
 
-  if (typeof window !== 'undefined' && window.location.origin) {
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
     const origin = window.location.origin;
-    if (!origin.includes('localhost') && !origin.includes('127.0.0.1')) {
+    if (origin.startsWith('https://') && !origin.includes('localhost') && !origin.includes('127.0.0.1')) {
       return origin.replace(/\/$/, '');
     }
   }
 
-  if (envUrl && typeof envUrl === 'string' && !envUrl.includes('localhost')) {
-    return envUrl.replace(/\/$/, '');
-  }
-
-  if (typeof window !== 'undefined' && window.location.origin) {
-    return window.location.origin.replace(/\/$/, '');
-  }
-
+  // Canonical production deployment URL
   return 'https://trustfordge.vercel.app';
 }
 
 /**
- * Returns the absolute QR code URL for a public vehicle token
+ * Returns the absolute QR code URL for a public vehicle token.
+ * Canonical destination: https://trustfordge.vercel.app/v/{publicToken}
  */
 export function getPublicQrUrl(token: string): string {
-  return `${getAppBaseUrl()}/v/${token}`;
+  const cleanToken = (token || '').trim();
+  return `${getAppBaseUrl()}/v/${cleanToken}`;
 }
 

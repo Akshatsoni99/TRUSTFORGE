@@ -31,7 +31,7 @@ import {
   submitEmergencyAlert 
 } from '../lib/storage';
 import { PublicVehicleData, PublicTrustedContact } from '../types';
-import { checkRateLimit, formatVehicleNumber } from '../lib/utils';
+import { checkRateLimit, formatVehicleNumber, normalizeIndianMobile } from '../lib/utils';
 
 export const PublicQRScanPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
@@ -391,7 +391,7 @@ export const PublicQRScanPage: React.FC = () => {
                     </span>
                   </div>
                   <a
-                    href={`tel:${vehicle.owner_public_phone}`}
+                    href={`tel:${normalizeIndianMobile(vehicle.owner_public_phone)}`}
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shadow-subtle shrink-0"
                   >
                     <Phone className="w-3.5 h-3.5" />
@@ -508,7 +508,7 @@ export const PublicQRScanPage: React.FC = () => {
                         </a>
 
                         <a
-                          href={`tel:${contact.phone}`}
+                          href={`tel:${normalizeIndianMobile(contact.phone)}`}
                           className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-colors shadow-subtle"
                           title="Call Phone"
                         >

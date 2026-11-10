@@ -28,6 +28,7 @@ export const QRCodeDisplay: React.FC<QRCodeDisplayProps> = ({
   onStatusUpdated,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [showConfirmRegenerate, setShowConfirmRegenerate] = useState(false);
@@ -36,18 +37,41 @@ export const QRCodeDisplay: React.FC<QRCodeDisplayProps> = ({
   const publicUrl = getPublicQrUrl(token);
 
   useEffect(() => {
-    if (canvasRef.current && token) {
+    if (!token) return;
+
+    // Generate high-resolution, optimal-density QR code (errorCorrectionLevel 'M' for scannability from screens)
+    QRCode.toDataURL(
+      publicUrl,
+      {
+        width: 400,
+        margin: 4,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF',
+        },
+        errorCorrectionLevel: 'M',
+      },
+      (err, url) => {
+        if (err) {
+          console.error('Failed to generate QR Data URL:', err);
+        } else if (url) {
+          setQrDataUrl(url);
+        }
+      }
+    );
+
+    if (canvasRef.current) {
       QRCode.toCanvas(
         canvasRef.current,
         publicUrl,
         {
-          width: 256,
-          margin: 2,
+          width: 400,
+          margin: 4,
           color: {
-            dark: '#0F172A', // Slate 900
+            dark: '#000000',
             light: '#FFFFFF',
           },
-          errorCorrectionLevel: 'H',
+          errorCorrectionLevel: 'M',
         },
         (error) => {
           if (error) console.error('Failed to generate QR code canvas:', error);
@@ -68,12 +92,31 @@ export const QRCodeDisplay: React.FC<QRCodeDisplayProps> = ({
     }
   };
 
-  const handleDownloadPNG = () => {
-    if (!canvasRef.current) return;
-    const link = document.createElement('a');
-    link.download = `TrustFordge-QR-${registrationNumber.replace(/\s+/g, '-')}.png`;
-    link.href = canvasRef.current.toDataURL('image/png');
-    link.click();
+  const handleDownloadPNG = async () => {
+    try {
+      // Generate ultra high-res 1000x1000 PNG directly from canonical public URL
+      const highResDataUrl = await QRCode.toDataURL(publicUrl, {
+        width: 1000,
+        margin: 4,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF',
+        },
+        errorCorrectionLevel: 'M',
+      });
+      const link = document.createElement('a');
+      link.download = `TrustFordge-QR-${registrationNumber.replace(/\s+/g, '-')}.png`;
+      link.href = highResDataUrl;
+      link.click();
+    } catch (err) {
+      console.error('Failed to generate high-res download:', err);
+      if (canvasRef.current) {
+        const link = document.createElement('a');
+        link.download = `TrustFordge-QR-${registrationNumber.replace(/\s+/g, '-')}.png`;
+        link.href = canvasRef.current.toDataURL('image/png');
+        link.click();
+      }
+    }
   };
 
   const handlePrint = () => {
@@ -148,10 +191,20 @@ export const QRCodeDisplay: React.FC<QRCodeDisplayProps> = ({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-center">
-        {/* Canvas Display */}
+        {/* QR Code Preview Display */}
         <div className="md:col-span-5 flex flex-col items-center justify-center p-4 bg-slate-50 rounded-xl border border-slate-100">
-          <div className="bg-white p-4 rounded-xl shadow-subtle border border-slate-200 relative">
-            <canvas ref={canvasRef} className="max-w-[200px] w-full h-auto block" />
+          <div className="bg-white p-4 rounded-xl shadow-subtle border border-slate-200 relative flex items-center justify-center min-h-[220px]">
+            {qrDataUrl ? (
+              <img
+                src={qrDataUrl}
+                alt={`TrustFordge QR Code for ${registrationNumber}`}
+                className="w-[200px] h-[200px] object-contain block mx-auto rounded"
+                style={{ imageRendering: 'pixelated' }}
+              />
+            ) : (
+              <canvas ref={canvasRef} className="max-w-[200px] w-full h-auto block" />
+            )}
+            <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
             {!isActive && (
               <div className="absolute inset-0 bg-slate-900/75 backdrop-blur-[2px] rounded-xl flex flex-col items-center justify-center text-white text-center p-4">
                 <AlertTriangle className="w-8 h-8 text-amber-400 mb-2" />

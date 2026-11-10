@@ -1,6 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { Shield, PhoneCall, AlertCircle } from 'lucide-react';
+import { Shield } from 'lucide-react';
 import { formatVehicleNumber, getPublicQrUrl } from '../../lib/utils';
 
 interface QRCardPrintableProps {
@@ -19,21 +19,42 @@ export const QRCardPrintable: React.FC<QRCardPrintableProps> = ({
   category,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const publicUrl = getPublicQrUrl(token);
 
   useEffect(() => {
-    if (canvasRef.current && token) {
+    if (!token) return;
+
+    QRCode.toDataURL(
+      publicUrl,
+      {
+        width: 600,
+        margin: 4,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF',
+        },
+        errorCorrectionLevel: 'M',
+      },
+      (err, url) => {
+        if (!err && url) {
+          setQrDataUrl(url);
+        }
+      }
+    );
+
+    if (canvasRef.current) {
       QRCode.toCanvas(
         canvasRef.current,
         publicUrl,
         {
-          width: 240,
-          margin: 1,
+          width: 500,
+          margin: 4,
           color: {
-            dark: '#0A192F',
+            dark: '#000000',
             light: '#FFFFFF',
           },
-          errorCorrectionLevel: 'H',
+          errorCorrectionLevel: 'M',
         }
       );
     }
@@ -67,10 +88,19 @@ export const QRCardPrintable: React.FC<QRCardPrintableProps> = ({
           </div>
         </div>
 
-        {/* QR Canvas */}
+        {/* QR Display */}
         <div className="flex justify-center py-2">
           <div className="p-2 border-2 border-slate-300 rounded-2xl bg-white">
-            <canvas ref={canvasRef} className="block w-[200px] h-[200px]" />
+            {qrDataUrl ? (
+              <img
+                src={qrDataUrl}
+                alt={`TrustFordge Pass QR Code for ${registrationNumber}`}
+                className="block w-[200px] h-[200px]"
+                style={{ imageRendering: 'pixelated' }}
+              />
+            ) : (
+              <canvas ref={canvasRef} className="block w-[200px] h-[200px]" />
+            )}
           </div>
         </div>
 
