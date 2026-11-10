@@ -465,9 +465,11 @@ export async function getPublicVehicleByToken(token: string): Promise<{
   error?: 'INVALID_TOKEN' | 'INACTIVE_QR' | 'NOT_FOUND';
   message?: string;
 }> {
-  // If Supabase is configured, use secure public RPC
+  const cleanToken = (token || '').trim();
+
+  // 1. Primary path: Supabase secure public RPC (works anonymously on all devices & incognito)
   if (isSupabaseConfigured && supabase) {
-    const rpcRes = await fetchPublicVehicleRpc(token);
+    const rpcRes = await fetchPublicVehicleRpc(cleanToken);
     if (rpcRes.success && rpcRes.vehicle) {
       return {
         success: true,
@@ -481,95 +483,93 @@ export async function getPublicVehicleByToken(token: string): Promise<{
         message: rpcRes.message || 'This vehicle QR code has been temporarily deactivated by the owner.',
       };
     }
-    if (rpcRes.error === 'INVALID_TOKEN' || rpcRes.error === 'INVALID_OR_INACTIVE_TOKEN') {
+  }
+
+  // 2. Local storage fallback (serves the owner's browser and immediately syncs to cloud)
+  const vehicles = getLocalTable<Vehicle>(STORAGE_KEYS.VEHICLES);
+  const vehicle = vehicles.find(v => v.qr_token === cleanToken);
+
+  if (vehicle) {
+    if (!vehicle.qr_active) {
       return {
         success: false,
-        error: 'INVALID_TOKEN',
-        message: rpcRes.message || 'This vehicle QR code is not recognized.',
+        error: 'INACTIVE_QR',
+        message: 'This vehicle QR code has been temporarily deactivated by the owner.',
       };
     }
-  }
 
-  // Local storage fallback
-  const vehicles = getLocalTable<Vehicle>(STORAGE_KEYS.VEHICLES);
-  const vehicle = vehicles.find(v => v.qr_token === token);
+    // Auto-sync this vehicle to Supabase in the background so mobile/incognito can resolve it
+    if (isSupabaseConfigured && supabase) {
+      syncLocalVehiclesToSupabase().catch(() => {});
+    }
 
-  if (!vehicle) {
+    // Increment scan count and log scan event
+    vehicle.qr_scans_count = (vehicle.qr_scans_count || 0) + 1;
+    setLocalTable(STORAGE_KEYS.VEHICLES, vehicles);
+
+    logActivityEvent(vehicle.id, 'qr_scan', {
+      referrer: typeof document !== 'undefined' ? document.referrer : '',
+      timestamp: new Date().toISOString(),
+    });
+
+    const profiles = getLocalTable<Profile>(STORAGE_KEYS.PROFILES);
+    const owner = profiles.find(p => p.id === vehicle.owner_id);
+
+    let ownerDisplayName: string | undefined = undefined;
+    if (vehicle.show_owner_name !== false && owner?.full_name) {
+      const parts = owner.full_name.trim().split(' ');
+      ownerDisplayName = parts.length > 1 ? `${parts[0]} ${parts[1][0]}.` : parts[0];
+    }
+
+    // Count trusted contacts without revealing any private details
+    const contacts = getLocalTable<TrustedContact>(STORAGE_KEYS.TRUSTED_CONTACTS);
+    const trustedCount = contacts.filter(c => c.vehicle_id === vehicle.id || c.owner_id === vehicle.owner_id).length;
+
+    const displayReg = vehicle.mask_registration_number
+      ? maskVehicleNumber(vehicle.registration_number)
+      : vehicle.registration_number;
+
+    const publicData: PublicVehicleData = {
+      id: vehicle.id,
+      category: vehicle.category,
+      brand: vehicle.brand,
+      model: vehicle.model,
+      model_year: vehicle.model_year,
+      color: vehicle.color,
+      registration_display: displayReg,
+      photo_url: vehicle.photo_url,
+      owner_display_name: ownerDisplayName,
+      trusted_contacts_count: trustedCount,
+      trusted_contacts: contacts
+        .filter(c => c.vehicle_id === vehicle.id || c.owner_id === vehicle.owner_id)
+        .map(c => ({
+          id: c.id,
+          full_name: c.full_name,
+          relationship: c.relationship,
+          phone: vehicle.allow_trusted_contacts_phone_display !== false ? c.phone : null,
+          is_primary: c.is_primary,
+        })),
+      allow_contact_requests: vehicle.allow_contact_requests ?? true,
+      allow_parking_reports: vehicle.allow_parking_reports ?? true,
+      allow_emergency_alerts: vehicle.allow_emergency_alerts ?? true,
+      allow_public_phone_display: Boolean(vehicle.allow_public_phone_display),
+      owner_public_phone: vehicle.allow_public_phone_display && owner?.phone ? owner.phone : undefined,
+      allow_public_address_display: Boolean(vehicle.allow_public_address_display),
+      owner_public_address: vehicle.allow_public_address_display && owner?.residential_address ? owner.residential_address : undefined,
+      allow_trusted_contacts_display: vehicle.allow_trusted_contacts_display ?? true,
+      allow_trusted_contacts_phone_display: vehicle.allow_trusted_contacts_phone_display ?? true,
+    };
+
     return {
-      success: false,
-      error: 'INVALID_TOKEN',
-      message: 'This vehicle QR code is not recognized or has been invalidated.',
+      success: true,
+      vehicle: publicData,
     };
   }
-
-  if (!vehicle.qr_active) {
-    return {
-      success: false,
-      error: 'INACTIVE_QR',
-      message: 'This vehicle QR code has been temporarily deactivated by the owner.',
-    };
-  }
-
-  // Increment scan count and log scan event
-  vehicle.qr_scans_count = (vehicle.qr_scans_count || 0) + 1;
-  setLocalTable(STORAGE_KEYS.VEHICLES, vehicles);
-
-  logActivityEvent(vehicle.id, 'qr_scan', {
-    referrer: typeof document !== 'undefined' ? document.referrer : '',
-    timestamp: new Date().toISOString(),
-  });
-
-  const profiles = getLocalTable<Profile>(STORAGE_KEYS.PROFILES);
-  const owner = profiles.find(p => p.id === vehicle.owner_id);
-
-  let ownerDisplayName: string | undefined = undefined;
-  if (vehicle.show_owner_name !== false && owner?.full_name) {
-    const parts = owner.full_name.trim().split(' ');
-    ownerDisplayName = parts.length > 1 ? `${parts[0]} ${parts[1][0]}.` : parts[0];
-  }
-
-  // Count trusted contacts without revealing any personal contact info
-  const contacts = getLocalTable<TrustedContact>(STORAGE_KEYS.TRUSTED_CONTACTS);
-  const trustedCount = contacts.filter(c => c.vehicle_id === vehicle.id || c.owner_id === vehicle.owner_id).length;
-
-  const displayReg = vehicle.mask_registration_number
-    ? maskVehicleNumber(vehicle.registration_number)
-    : vehicle.registration_number;
-
-  const publicData: PublicVehicleData = {
-    id: vehicle.id,
-    category: vehicle.category,
-    brand: vehicle.brand,
-    model: vehicle.model,
-    model_year: vehicle.model_year,
-    color: vehicle.color,
-    registration_display: displayReg,
-    photo_url: vehicle.photo_url,
-    owner_display_name: ownerDisplayName,
-    trusted_contacts_count: trustedCount,
-    trusted_contacts: contacts
-      .filter(c => c.vehicle_id === vehicle.id || c.owner_id === vehicle.owner_id)
-      .map(c => ({
-        id: c.id,
-        full_name: c.full_name,
-        relationship: c.relationship,
-        phone: vehicle.allow_trusted_contacts_phone_display !== false ? c.phone : null,
-        is_primary: c.is_primary,
-      })),
-    allow_contact_requests: vehicle.allow_contact_requests ?? true,
-    allow_parking_reports: vehicle.allow_parking_reports ?? true,
-    allow_emergency_alerts: vehicle.allow_emergency_alerts ?? true,
-    allow_public_phone_display: Boolean(vehicle.allow_public_phone_display),
-    owner_public_phone: vehicle.allow_public_phone_display && owner?.phone ? owner.phone : undefined,
-    allow_public_address_display: Boolean(vehicle.allow_public_address_display),
-    owner_public_address: vehicle.allow_public_address_display && owner?.residential_address ? owner.residential_address : undefined,
-    allow_trusted_contacts_display: vehicle.allow_trusted_contacts_display ?? true,
-    allow_trusted_contacts_phone_display: vehicle.allow_trusted_contacts_phone_display ?? true,
-  };
 
   return {
-    success: true,
-    vehicle: publicData,
+    success: false,
+    error: 'INVALID_TOKEN',
+    message: 'This vehicle QR code is not recognized or has been invalidated.',
   };
 }
 

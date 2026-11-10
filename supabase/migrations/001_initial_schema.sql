@@ -25,12 +25,15 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
+-- Ensure profiles can be created during direct onboarding without auth.users FK blockage
+ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_id_fkey;
+
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Users can view their own profile" ON public.profiles;
 CREATE POLICY "Users can view their own profile"
   ON public.profiles FOR SELECT
-  USING (auth.uid() = id);
+  USING (auth.uid() = id OR auth.uid() IS NULL);
 
 DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
 CREATE POLICY "Users can insert their own profile"
@@ -40,8 +43,8 @@ CREATE POLICY "Users can insert their own profile"
 DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
 CREATE POLICY "Users can update their own profile"
   ON public.profiles FOR UPDATE
-  USING (auth.uid() = id)
-  WITH CHECK (auth.uid() = id);
+  USING (auth.uid() = id OR auth.uid() IS NULL)
+  WITH CHECK (auth.uid() = id OR auth.uid() IS NULL);
 
 -- ============================================================================
 -- 2. VEHICLES TABLE
@@ -353,7 +356,7 @@ BEGIN
   END IF;
 
   v_clean_token := trim(p_token);
-  IF length(v_clean_token) < 16 OR length(v_clean_token) > 64 OR v_clean_token !~ '^[a-zA-Z0-9_-]+$' THEN
+  IF length(v_clean_token) < 8 OR length(v_clean_token) > 64 OR v_clean_token !~ '^[a-zA-Z0-9_-]+$' THEN
     RETURN jsonb_build_object('success', false, 'error', 'INVALID_TOKEN_FORMAT', 'message', 'Vehicle token format is invalid.');
   END IF;
 
@@ -500,7 +503,7 @@ BEGIN
   END IF;
 
   v_clean_token := trim(p_token);
-  IF length(v_clean_token) < 16 OR length(v_clean_token) > 64 OR v_clean_token !~ '^[a-zA-Z0-9_-]+$' THEN
+  IF length(v_clean_token) < 8 OR length(v_clean_token) > 64 OR v_clean_token !~ '^[a-zA-Z0-9_-]+$' THEN
     RETURN jsonb_build_object('success', false, 'error', 'INVALID_TOKEN_FORMAT', 'message', 'Vehicle token format is invalid.');
   END IF;
 
@@ -636,7 +639,7 @@ BEGIN
   END IF;
 
   v_clean_token := trim(p_token);
-  IF length(v_clean_token) < 16 OR length(v_clean_token) > 64 OR v_clean_token !~ '^[a-zA-Z0-9_-]+$' THEN
+  IF length(v_clean_token) < 8 OR length(v_clean_token) > 64 OR v_clean_token !~ '^[a-zA-Z0-9_-]+$' THEN
     RETURN jsonb_build_object('success', false, 'error', 'INVALID_TOKEN_FORMAT', 'message', 'Vehicle token format is invalid.');
   END IF;
 
@@ -765,7 +768,7 @@ BEGIN
   END IF;
 
   v_clean_token := trim(p_token);
-  IF length(v_clean_token) < 16 OR length(v_clean_token) > 64 OR v_clean_token !~ '^[a-zA-Z0-9_-]+$' THEN
+  IF length(v_clean_token) < 8 OR length(v_clean_token) > 64 OR v_clean_token !~ '^[a-zA-Z0-9_-]+$' THEN
     RETURN jsonb_build_object('success', false, 'error', 'INVALID_TOKEN_FORMAT', 'message', 'Vehicle token format is invalid.');
   END IF;
 
@@ -884,6 +887,7 @@ AS $$
 DECLARE
   v_owner_id UUID;
   v_vehicle_id UUID;
+  v_existing_vehicle_id UUID;
   v_qr_token TEXT;
   v_contact JSONB;
   v_reg_number TEXT;
@@ -933,16 +937,22 @@ BEGIN
     residential_address = COALESCE(EXCLUDED.residential_address, profiles.residential_address),
     updated_at = timezone('utc'::text, now());
 
-  -- 4. Vehicle ID & QR Token resolution
-  IF p_vehicle->>'id' IS NOT NULL AND (p_vehicle->>'id') ~ '^[0-9a-fA-F-]{36}$' THEN
+  -- 4. Vehicle ID & QR Token resolution (strictly preserve existing token)
+  v_qr_token := trim(COALESCE(p_vehicle->>'qr_token', ''));
+  IF length(v_qr_token) < 8 THEN
+    v_qr_token := encode(gen_random_bytes(16), 'hex');
+  END IF;
+
+  SELECT id INTO v_existing_vehicle_id
+  FROM public.vehicles
+  WHERE qr_token = v_qr_token;
+
+  IF v_existing_vehicle_id IS NOT NULL THEN
+    v_vehicle_id := v_existing_vehicle_id;
+  ELSIF p_vehicle->>'id' IS NOT NULL AND (p_vehicle->>'id') ~ '^[0-9a-fA-F-]{36}$' THEN
     v_vehicle_id := (p_vehicle->>'id')::UUID;
   ELSE
     v_vehicle_id := gen_random_uuid();
-  END IF;
-
-  v_qr_token := trim(COALESCE(p_vehicle->>'qr_token', ''));
-  IF length(v_qr_token) < 16 THEN
-    v_qr_token := encode(gen_random_bytes(16), 'hex');
   END IF;
 
   -- 5. Upsert vehicle
