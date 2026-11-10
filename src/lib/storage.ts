@@ -119,7 +119,21 @@ export function setLocalTable<T>(key: string, data: T[]): void {
 
 // Current logged in owner ID
 export function getCurrentOwnerId(): string | null {
-  return localStorage.getItem(STORAGE_KEYS.CURRENT_OWNER);
+  const direct = localStorage.getItem(STORAGE_KEYS.CURRENT_OWNER);
+  if (direct) return direct;
+  // If not explicitly set, check if profiles exist
+  const profiles = getLocalTable<Profile>(STORAGE_KEYS.PROFILES);
+  if (profiles.length > 0 && profiles[0].id) {
+    localStorage.setItem(STORAGE_KEYS.CURRENT_OWNER, profiles[0].id);
+    return profiles[0].id;
+  }
+  // Check if vehicles exist
+  const vehicles = getLocalTable<Vehicle>(STORAGE_KEYS.VEHICLES);
+  if (vehicles.length > 0 && vehicles[0].owner_id) {
+    localStorage.setItem(STORAGE_KEYS.CURRENT_OWNER, vehicles[0].owner_id);
+    return vehicles[0].owner_id;
+  }
+  return null;
 }
 
 export function setCurrentOwnerId(id: string | null): void {
@@ -132,9 +146,12 @@ export function setCurrentOwnerId(id: string | null): void {
 
 export function getCurrentProfile(): Profile | null {
   const ownerId = getCurrentOwnerId();
-  if (!ownerId) return null;
   const profiles = getLocalTable<Profile>(STORAGE_KEYS.PROFILES);
-  return profiles.find(p => p.id === ownerId) || null;
+  if (ownerId) {
+    const found = profiles.find(p => p.id === ownerId);
+    if (found) return found;
+  }
+  return profiles[0] || null;
 }
 
 // ============================================================================
@@ -347,7 +364,8 @@ export async function registerOwnerAndVehicle(data: OnboardingData): Promise<{
 
 export function getOwnerVehicles(ownerId: string): Vehicle[] {
   const vehicles = getLocalTable<Vehicle>(STORAGE_KEYS.VEHICLES);
-  return vehicles.filter(v => v.owner_id === ownerId);
+  const filtered = vehicles.filter(v => v.owner_id === ownerId);
+  return filtered.length > 0 ? filtered : vehicles;
 }
 
 export function getVehicleById(vehicleId: string): Vehicle | null {
@@ -904,8 +922,9 @@ export function getOwnerActivityEvents(ownerId: string): ActivityEvent[] {
 }
 
 export function getOwnerTrustedContacts(ownerId: string): TrustedContact[] {
-  return getLocalTable<TrustedContact>(STORAGE_KEYS.TRUSTED_CONTACTS)
-    .filter(c => c.owner_id === ownerId);
+  const contacts = getLocalTable<TrustedContact>(STORAGE_KEYS.TRUSTED_CONTACTS);
+  const filtered = contacts.filter(c => c.owner_id === ownerId);
+  return filtered.length > 0 ? filtered : contacts;
 }
 
 export function saveTrustedContact(contact: TrustedContact): void {

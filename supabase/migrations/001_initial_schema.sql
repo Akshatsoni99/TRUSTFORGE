@@ -388,8 +388,8 @@ BEGIN
     VALUES (v_vehicle.id, 'qr_scan', jsonb_build_object('timestamp', timezone('utc'::text, now())));
   END IF;
 
-  -- Fetch owner profile for display name calculation only
-  SELECT full_name, phone INTO v_profile
+  -- Fetch owner profile for display name and conditional contact calculation
+  SELECT * INTO v_profile
   FROM public.profiles
   WHERE id = v_vehicle.owner_id;
 
@@ -1039,6 +1039,64 @@ END;
 $$;
 
 -- ============================================================================
+-- Function 6: Secure Owner Vehicles Retrieval (Bypasses anonymous RLS for owner's UUID)
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.get_owner_vehicles(p_owner_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_vehicles_json JSONB;
+BEGIN
+  IF p_owner_id IS NULL THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  SELECT COALESCE(
+    jsonb_agg(
+      to_jsonb(v) ORDER BY v.created_at DESC
+    ),
+    '[]'::jsonb
+  ) INTO v_vehicles_json
+  FROM public.vehicles v
+  WHERE v.owner_id = p_owner_id;
+
+  RETURN v_vehicles_json;
+END;
+$$;
+
+-- ============================================================================
+-- Function 7: Secure Owner Trusted Contacts Retrieval (Bypasses anonymous RLS for owner's UUID)
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.get_owner_trusted_contacts(p_owner_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_contacts_json JSONB;
+BEGIN
+  IF p_owner_id IS NULL THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  SELECT COALESCE(
+    jsonb_agg(
+      to_jsonb(tc) ORDER BY tc.is_primary DESC, tc.created_at ASC
+    ),
+    '[]'::jsonb
+  ) INTO v_contacts_json
+  FROM public.trusted_contacts tc
+  WHERE tc.owner_id = p_owner_id;
+
+  RETURN v_contacts_json;
+END;
+$$;
+
+-- ============================================================================
 -- EXPLICIT FUNCTION PERMISSIONS (REVOKE FROM PUBLIC, GRANT TO ANON & AUTHENTICATED)
 -- ============================================================================
 REVOKE ALL ON FUNCTION public.get_public_vehicle_by_token(TEXT) FROM PUBLIC;
@@ -1046,12 +1104,16 @@ REVOKE ALL ON FUNCTION public.submit_public_contact_request(TEXT, TEXT, TEXT, TE
 REVOKE ALL ON FUNCTION public.submit_public_parking_report(TEXT, TEXT, TEXT, JSONB, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.submit_public_emergency_alert(TEXT, TEXT, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.register_owner_and_vehicle(JSONB, JSONB, JSONB) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_owner_vehicles(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_owner_trusted_contacts(UUID) FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION public.get_public_vehicle_by_token(TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.submit_public_contact_request(TEXT, TEXT, TEXT, TEXT, JSONB) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.submit_public_parking_report(TEXT, TEXT, TEXT, JSONB, TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.submit_public_emergency_alert(TEXT, TEXT, JSONB) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.register_owner_and_vehicle(JSONB, JSONB, JSONB) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_owner_vehicles(UUID) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_owner_trusted_contacts(UUID) TO anon, authenticated;
 
 -- ============================================================================
 -- REALTIME SUBSCRIPTIONS ENABLING (IDEMPOTENT)

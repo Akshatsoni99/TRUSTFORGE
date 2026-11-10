@@ -86,12 +86,18 @@ export const DashboardPage: React.FC = () => {
           fetchOwnerTrustedContactsFromDb(currentId),
         ]);
 
-        if (dbProfile || dbVehicles.length > 0) {
-          if (dbProfile) setProfile(dbProfile);
-          setVehicles(dbVehicles);
-          setTrustedContacts(dbContacts);
+        const localVehs = getOwnerVehicles(currentId);
+        const combinedVehicles = dbVehicles && dbVehicles.length > 0 ? dbVehicles : localVehs;
 
-          const vehicleIds = dbVehicles.map(v => v.id);
+        const localContacts = getOwnerTrustedContacts(currentId);
+        const combinedContacts = dbContacts && dbContacts.length > 0 ? dbContacts : localContacts;
+
+        if (dbProfile || combinedVehicles.length > 0) {
+          setProfile(dbProfile || getCurrentProfile());
+          setVehicles(combinedVehicles);
+          setTrustedContacts(combinedContacts);
+
+          const vehicleIds = combinedVehicles.map(v => v.id);
           const [dbRequests, dbReports, dbAlerts, dbEvents] = await Promise.all([
             fetchOwnerContactRequestsFromDb(vehicleIds),
             fetchOwnerParkingReportsFromDb(vehicleIds),
@@ -99,19 +105,29 @@ export const DashboardPage: React.FC = () => {
             fetchOwnerActivityEventsFromDb(vehicleIds),
           ]);
 
-          setContactRequests(dbRequests);
-          setParkingReports(dbReports);
-          setEmergencyAlerts(dbAlerts);
-          setActivityEvents(dbEvents);
+          const localRequests = getOwnerContactRequests(currentId);
+          const localReports = getOwnerParkingReports(currentId);
+          const localAlerts = getOwnerEmergencyAlerts(currentId);
+          const localEvents = getOwnerActivityEvents(currentId);
 
-          const totalScans = dbVehicles.reduce((sum, v) => sum + (v.qr_scans_count || 0), 0);
+          const finalRequests = dbRequests.length > 0 ? dbRequests : localRequests;
+          const finalReports = dbReports.length > 0 ? dbReports : localReports;
+          const finalAlerts = dbAlerts.length > 0 ? dbAlerts : localAlerts;
+          const finalEvents = dbEvents.length > 0 ? dbEvents : localEvents;
+
+          setContactRequests(finalRequests);
+          setParkingReports(finalReports);
+          setEmergencyAlerts(finalAlerts);
+          setActivityEvents(finalEvents);
+
+          const totalScans = combinedVehicles.reduce((sum, v) => sum + (v.qr_scans_count || 0), 0);
           setStats({
             totalScans,
-            contactRequests: dbRequests.length,
-            parkingReports: dbReports.length,
-            emergencyAlerts: dbAlerts.length,
-            registeredVehiclesCount: dbVehicles.length,
-            activeQRCodesCount: dbVehicles.filter(v => v.qr_active).length,
+            contactRequests: finalRequests.length,
+            parkingReports: finalReports.length,
+            emergencyAlerts: finalAlerts.length,
+            registeredVehiclesCount: combinedVehicles.length,
+            activeQRCodesCount: combinedVehicles.filter(v => v.qr_active).length,
           });
           return;
         }

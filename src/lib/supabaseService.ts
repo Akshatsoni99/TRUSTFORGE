@@ -171,8 +171,18 @@ export async function fetchOwnerProfileFromDb(userId: string): Promise<Profile |
 }
 
 export async function fetchOwnerVehiclesFromDb(userId: string): Promise<Vehicle[]> {
-  if (!isSupabaseConfigured || !supabase) return [];
+  if (!isSupabaseConfigured || !supabase || !userId) return [];
   try {
+    // 1. Try secure SECURITY DEFINER RPC first (works without requiring active auth JWT)
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_owner_vehicles', {
+      p_owner_id: userId,
+    });
+
+    if (!rpcError && Array.isArray(rpcData)) {
+      return rpcData as Vehicle[];
+    }
+
+    // 2. Direct table fallback
     const { data, error } = await supabase
       .from('vehicles')
       .select('*')
@@ -191,8 +201,18 @@ export async function fetchOwnerVehiclesFromDb(userId: string): Promise<Vehicle[
 }
 
 export async function fetchOwnerTrustedContactsFromDb(userId: string): Promise<TrustedContact[]> {
-  if (!isSupabaseConfigured || !supabase) return [];
+  if (!isSupabaseConfigured || !supabase || !userId) return [];
   try {
+    // 1. Try secure SECURITY DEFINER RPC first
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_owner_trusted_contacts', {
+      p_owner_id: userId,
+    });
+
+    if (!rpcError && Array.isArray(rpcData)) {
+      return rpcData as TrustedContact[];
+    }
+
+    // 2. Direct table fallback
     const { data, error } = await supabase
       .from('trusted_contacts')
       .select('*')
